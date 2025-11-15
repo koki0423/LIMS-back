@@ -29,24 +29,23 @@ func (s *Service) PrintLabels(ctx context.Context, input PrintRequest) (*PrintRe
 	}
 
 	if err := PrintLabels(rows, params); err != nil {
-		// store.goから返る各エラーをここでハンドリングする
 		if errors.Is(err, ErrTapeSizeNotMatched) {
-			// テープ幅の不一致は「クライアントからの要求とサーバーの状態の競合」として409 Conflictを返す
+			// テープ幅の不一致は「クライアントからの要求とサーバーの状態の競合」:409 Conflictを返す
 			log.Println("[WARN]", ErrConflict(err.Error()))
 			return nil, ErrConflict(err.Error())
 		}
 		if errors.Is(err, ErrTemplateNotFound) {
-			// テンプレートが見つからないのは404 Not Found
+			// テンプレートが見つからない: 404 Not Found
 			log.Println("[WARN]", ErrNotFound(err.Error()))
 			return nil, ErrNotFound(err.Error())
 		}
 		if errors.Is(err, ErrNoPrintableSelected) {
-			// 印刷対象が選択されていないのは「クライアントのリクエストが不正」として400 Bad Request
+			// 印刷対象が選択されていないのは「クライアントのリクエストが不正」:400 Bad Request
 			log.Println("[WARN]", ErrInvalid(err.Error()))
 			return nil, ErrInvalid(err.Error())
 		}
 		if errors.Is(err, ErrSPC10NotFound) {
-			// SPC10.exeが見つからないのはサーバー内部の問題として500 Internal
+			// SPC10.exeが見つからないのはサーバー内部の問題:500 Internal
 			// ただし、メッセージは具体的で分かりやすいものにする
 			log.Println("[ERROR]", ErrInternal(err.Error()))
 			return nil, ErrInternal(err.Error())
@@ -57,6 +56,5 @@ func (s *Service) PrintLabels(ctx context.Context, input PrintRequest) (*PrintRe
 		return nil, ErrInternal(err.Error())
 	}
 
-	// 成功時は空のレスポンスとnil errorを返す
 	return &PrintResponse{}, nil
 }

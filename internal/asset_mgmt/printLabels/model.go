@@ -9,7 +9,6 @@ type PrintRow struct {
 	ColE    string // CSV 4列目
 }
 
-// PrintParams 外部から与えるパラメータ
 type PrintParams struct {
 	TemplateWidthMM     int    // 期待するテンプレ幅（テンプレート名構築用）
 	BarcodeType         string // バーコードのタイプ（"type"）

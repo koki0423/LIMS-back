@@ -101,7 +101,7 @@ func readUTF16File(path string) ([]string, error) {
 func writeCSVcp932(path string, rows []PrintRow) error {
 	// 既定の CSV 仕様：カンマ区切り・ダブルクォート自動
 	var b bytes.Buffer
-	enc := japanese.ShiftJIS.NewEncoder() // Windowsの「ANSI（CP932）」相当
+	enc := japanese.ShiftJIS.NewEncoder()
 	w := csv.NewWriter(transform.NewWriter(&b, enc))
 
 	for _, r := range rows {
@@ -253,10 +253,9 @@ func PrintLabels(data []PrintRow, p PrintParams) error {
 		return fmt.Errorf("failed to get executable path: %w", err)
 	}
 	exeDir := filepath.Dir(exePath)
-	// テンプレート用ディレクトリ（存在するかをチェックする）
+	// テンプレート用ディレクトリチェックする
 	assetDir := filepath.Join(exeDir, "printTemplate")
 	if _, err := os.Stat(assetDir); os.IsNotExist(err) {
-		// ディレクトリが存在しない場合は、明確なエラーメッセージを出して終了する
 		return fmt.Errorf("テンプレートディレクトリが見つかりません。実行ファイルと同じ階層に 'printTemplate' フォルダを作成し、.lw1 ファイルを配置してください。 path: %s", assetDir)
 	}
 
@@ -319,7 +318,7 @@ func PrintLabels(data []PrintRow, p PrintParams) error {
 	if ti.Width == "" || ti.Width == "0" {
 		return errors.New("テープ未検出、または幅0mm")
 	}
-	// テープ種類のチェック（Python版と同様: 0x00=Standard のみ許容）
+	// テープ種類のチェック（0x00=Standard のみ許容）
 	if ti.Type != "0x00" {
 		return fmt.Errorf("%s (Unsupported tape type: %s)", ErrorMessageTplNotFound, ti.Type)
 	}
