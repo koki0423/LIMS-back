@@ -52,11 +52,11 @@ func (s *Store) UpdateMngToFinal(ctx context.Context, id uint64, tmpMng string, 
 
 // 3) 取得
 func (s *Store) GetMasterByID(ctx context.Context, id uint64) (*AssetMasterResponse, error) {
-	const sel = `
+	const q = `
 	SELECT asset_master_id, management_number, name, management_category_id, genre_id, manufacturer, model, created_at
 	FROM assets_master WHERE asset_master_id = ?`
 	var out AssetMasterResponse
-	if err := s.db.QueryRowContext(ctx, sel, id).Scan(
+	if err := s.db.QueryRowContext(ctx, q, id).Scan(
 		&out.AssetMasterID, &out.ManagementNumber, &out.Name, &out.ManagementCategoryID,
 		&out.GenreID, &out.Manufacturer, &out.Model, &out.CreatedAt,
 	); err != nil {
