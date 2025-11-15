@@ -234,62 +234,62 @@ type assetRow struct {
 type sqlNullString struct{ sql.NullString }
 type sqlNullTime struct{ sql.NullTime }
 
-
 func (s *Store) CreateAssetTx(
-    ctx context.Context,
-    in CreateAssetRequest,
-    masterID uint64,
+	ctx context.Context,
+	in CreateAssetRequest,
+	masterID uint64,
 ) (assetID uint64, managementNumber string, err error) {
 
-    tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
-    if err != nil {
-        return 0, "", err
-    }
-    // 失敗時は必ずRollback
-    defer func() {
-        if err != nil {
-            _ = tx.Rollback()
-        }
-    }()
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return 0, "", err
+	}
+	// 失敗時は必ずRollback
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
 
-    const qIns = `
-        INSERT INTO assets
-          (asset_master_id, serial, quantity, purchased_at, status_id, owner, default_location,
-           location, last_checked_at, last_checked_by, notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(), ?, ?)`
+	const qIns = `
+		INSERT INTO assets
+			(asset_master_id, serial, quantity, purchased_at, status_id, owner, default_location,
+			location, last_checked_at, last_checked_by, notes)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(), ?, ?)`
 
-    res, err := tx.ExecContext(ctx, qIns,
-        masterID,
-        in.Serial,
-        in.Quantity,
-        in.PurchasedAt,
-        in.StatusID,
-        in.Owner,
-        in.DefaultLocation,
-        in.Location,
-        in.LastCheckedBy,
-        in.Notes,
-    )
-    if err != nil {
-        return 0, "", err
-    }
 
-    id64, err := res.LastInsertId()
-    if err != nil {
-        return 0, "", err
-    }
-    assetID = uint64(id64)
+	res, err := tx.ExecContext(ctx, qIns,
+		masterID,
+		in.Serial,
+		in.Quantity,
+		in.PurchasedAt,
+		in.StatusID,
+		in.Owner,
+		in.DefaultLocation,
+		"",
+		"",
+		in.Notes,
+	)
+	if err != nil {
+		return 0, "", err
+	}
 
-    const qMgmt = `SELECT management_number FROM assets_master WHERE asset_master_id = ?`
-    if err = tx.QueryRowContext(ctx, qMgmt, masterID).Scan(&managementNumber); err != nil {
-        log.Printf("Failed to resolve management_number for masterID=%d: %v", masterID, err)
-        return 0, "", err
-    }
+	id64, err := res.LastInsertId()
+	if err != nil {
+		return 0, "", err
+	}
+	assetID = uint64(id64)
 
-    if err = tx.Commit(); err != nil {
-        return 0, "", err
-    }
-    return assetID, managementNumber, nil
+	const qMgmt = `SELECT management_number FROM assets_master WHERE asset_master_id = ?`
+	if err = tx.QueryRowContext(ctx, qMgmt, masterID).Scan(&managementNumber); err != nil {
+		log.Printf("Failed to resolve management_number for masterID=%d: %v", masterID, err)
+		return 0, "", err
+	}
+
+	if err = tx.Commit(); err != nil {
+		return 0, "", err
+	}
+	return assetID, managementNumber, nil
 }
 
 func (s *Store) GetAssetByID(ctx context.Context, id uint64) (*AssetResponse, error) {
