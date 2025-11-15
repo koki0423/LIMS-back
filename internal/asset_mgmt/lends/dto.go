@@ -30,7 +30,7 @@ type LendResponse struct {
 	LentByID            *string   `json:"lent_by_id,omitempty"`
 	LentAt              time.Time `json:"lent_at"`
 	ReturnedQuantity    uint      `json:"returned_quantity"`
-	OutstandingQuantity uint      `json:"outstanding_quantity"`
+	OutstandingQuantity uint      `json:"outstanding_quantity,omitempty"`
 	Note                *string   `json:"note,omitempty"`
 	Returned            bool      `json:"returned"`
 }

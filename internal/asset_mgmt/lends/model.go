@@ -5,7 +5,6 @@ import (
 	"time"
 )
 
-// DBモデル（テーブル構造に極力1:1）
 type Lend struct {
 	LendID           uint64
 	LendULID         string
