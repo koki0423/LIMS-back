@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	// "github.com/gin-contrib/cors"
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	_ "github.com/go-sql-driver/mysql"
 
@@ -26,16 +26,26 @@ import (
 	"IRIS-backend/internal/platform/db"
 )
 
-// フロントのビルド出力を埋め込む（backend/public 配下）
+// フロントのビルド出力を埋め込む
 // "//go:embed public" ← これはビルドに必要なので消さないこと
 
-//go:embed public
+// go:embed public
 var embedded embed.FS
 
 func main() {
+	// 設定読み込み
 	cfg, err := db.LoadConfig("config/config.yaml")
 	if err != nil {
 		panic(err)
+	}
+
+	// 動作モード取得
+	mode := cfg.Mode
+	log.Printf("[INFO] mode:%s\n", mode)
+
+	if cfg.Mode != "dev" && cfg.Mode != "release" {
+		fmt.Println("Usage: go run main.go [dev|release]")
+		return
 	}
 
 	conn, err := db.Connect(cfg.DB)
@@ -51,14 +61,16 @@ func main() {
 	r.Use(gin.Logger(), gin.Recovery())
 	_ = r.SetTrustedProxies(nil)
 
-	// CORS（開発中のみ必要。埋め込み配信に切り替えたら基本不要）
-	// r.Use(cors.New(cors.Config{
-	// 	AllowOrigins:     []string{"http://localhost:3000"},
-	// 	AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "Idempotency-Key"},
-	// 	ExposeHeaders:    []string{"Content-Length"},
-	// 	AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-	// 	AllowCredentials: true,
-	// }))
+	if mode == "dev" {
+		// CORS（開発中のみ必要）
+		r.Use(cors.New(cors.Config{
+			AllowOrigins:     []string{"http://localhost:3000"},
+			AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "Idempotency-Key"},
+			ExposeHeaders:    []string{"Content-Length"},
+			AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+			AllowCredentials: true,
+		}))
+	}
 
 	// ヘルス
 	r.GET("/healthz", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
@@ -107,7 +119,7 @@ func main() {
 			return
 		}
 
-		// なければ index.html にフォールバック（ヒストリーAPI対応）
+		// なければ index.html にフォールバック
 		if idx, err := fileFS.Open("index.html"); err == nil {
 			defer idx.Close()
 			c.Header("Content-Type", "text/html; charset=utf-8")
@@ -127,13 +139,19 @@ func main() {
 		Addr:    ":8443",
 		Handler: r,
 	}
+
+	var certFile, keyFile string
+
 	// TLS設定
-	//開発用
-	// certFile := fmt.Sprintf("config/tls/dev/%s", cfg.Certificate.Cert)
-	// keyFile := fmt.Sprintf("config/tls/dev/%s", cfg.Certificate.Key)
-	//本番用
-	certFile := fmt.Sprintf("config/tls/deploy/%s", cfg.Certificate.Cert)
-	keyFile := fmt.Sprintf("config/tls/deploy/%s", cfg.Certificate.Key)
+	if mode == "dev" {
+		//開発用
+		certFile = fmt.Sprintf("config/tls/dev/%s", cfg.Certificate.Cert)
+		keyFile = fmt.Sprintf("config/tls/dev/%s", cfg.Certificate.Key)
+	} else {
+		//本番用
+		certFile = fmt.Sprintf("config/tls/release/%s", cfg.Certificate.Cert)
+		keyFile = fmt.Sprintf("config/tls/release/%s", cfg.Certificate.Key)
+	}
 
 	go func() {
 		log.Println("[INFO] listening on https://0.0.0.0:8443")

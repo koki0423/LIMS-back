@@ -31,6 +31,7 @@ type Certs struct {
 
 type Config struct {
 	Version string         `yaml:"version"`
+	Mode    string         `yaml:"mode"`
 	DB      DatabaseConfig `yaml:"database"`
 	Certificate Certs      `yaml:"certificate"`
 }
@@ -48,7 +49,6 @@ func LoadConfig(path string) (*Config, error) {
 }
 
 func Connect(c DatabaseConfig) (*sql.DB, error) {
-	// タイムアウトも付けて握りっぱなし対策
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true&tls=false&timeout=3s&readTimeout=5s&writeTimeout=5s",
 		c.Username, c.Password, c.Host, c.Port, c.DBName)
 
