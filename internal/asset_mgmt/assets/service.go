@@ -12,7 +12,7 @@ import (
 	ulid "github.com/oklog/ulid/v2"
 )
 
-// ===== Error model (disposals/lends と同型) =====
+// ===== Error model =====
 type Code string
 
 const (
@@ -60,7 +60,6 @@ func NewService(db *sql.DB) *Service { return &Service{db: db, store: NewStore(d
 // ===== Master =====
 
 func (s *Service) CreateAssetMaster(ctx context.Context, in CreateAssetMasterRequest) (AssetMasterResponse, error) {
-	// 軽バリデーション
 	if strings.TrimSpace(in.Name) == "" || strings.TrimSpace(in.Manufacturer) == "" ||
 		in.ManagementCategoryID == 0 || in.GenreID == 0 {
 		return AssetMasterResponse{}, ErrInvalid("name, manufacturer, management_category_id, genre_id are required")
