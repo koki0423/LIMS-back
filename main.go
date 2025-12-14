@@ -73,7 +73,7 @@ func main() {
 	}
 
 	// ヘルス
-	r.GET("/healthz", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
+	r.GET("/ping", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
 
 	// /api/v2
 	api := r.Group("/api/v2")
@@ -119,7 +119,6 @@ func main() {
 			return
 		}
 
-		// なければ index.html にフォールバック
 		if idx, err := fileFS.Open("index.html"); err == nil {
 			defer idx.Close()
 			c.Header("Content-Type", "text/html; charset=utf-8")
@@ -134,7 +133,7 @@ func main() {
 		c.Status(http.StatusNotFound)
 	})
 
-	// TLS起動（:8443 例）
+	// TLS起動
 	srv := &http.Server{
 		Addr:    ":8443",
 		Handler: r,
