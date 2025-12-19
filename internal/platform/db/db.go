@@ -61,7 +61,7 @@ func Connect(c DatabaseConfig) (*sql.DB, error) {
 		return nil, fmt.Errorf("DB接続に失敗: %w", err)
 	}
 
-	// 接続プール（※合算がMySQLの max_connections を超えないよう配分する）
+	// 接続プール（合算がMySQLの max_connections を超えないよう配分する）
 	db.SetMaxOpenConns(80)
 	db.SetMaxIdleConns(20)
 	db.SetConnMaxLifetime(30 * time.Minute)

@@ -17,7 +17,7 @@ func RunInTx(ctx context.Context, db *sql.DB, opts *sql.TxOptions, fn func(ctx c
 	if err != nil {
 		return err
 	}
-	// fn 実行
+
 	if err := fn(ctx, tx); err != nil {
 		_ = tx.Rollback()
 		return err
@@ -25,7 +25,7 @@ func RunInTx(ctx context.Context, db *sql.DB, opts *sql.TxOptions, fn func(ctx c
 	return tx.Commit()
 }
 
-// 読み取り専用Tx（必要なら）
+// 読み取り専用Tx
 func ReadOnly(ctx context.Context, db *sql.DB, fn func(ctx context.Context, tx DBTX) error) error {
 	return RunInTx(ctx, db, &sql.TxOptions{ReadOnly: true}, fn)
 }
