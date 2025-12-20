@@ -64,7 +64,7 @@ func main() {
 	if mode == "dev" {
 		// CORS（開発中のみ必要）
 		r.Use(cors.New(cors.Config{
-			AllowOrigins:     []string{"http://localhost:3000"},
+			AllowOrigins:     []string{"http://localhost:8080"},
 			AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "Idempotency-Key"},
 			ExposeHeaders:    []string{"Content-Length"},
 			AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
