@@ -1,3 +1,3 @@
 # 備品管理システムについて
-## Swaggerについて
-ReadMe読むよりも ```swag init ; go run . ```でswagger確認した方が早いっす
+## 重要
+- フロントエンドはWebNFCで学生証読み取ってると思ったらWebUSBを使っていたのでTLS化は必須ではなくなりました
