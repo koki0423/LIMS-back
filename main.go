@@ -64,7 +64,10 @@ func main() {
 	if mode == "dev" {
 		// CORS（開発中のみ必要）
 		r.Use(cors.New(cors.Config{
-			AllowOrigins:     []string{"http://localhost:8080"},
+			AllowOrigins: []string{
+				"http://localhost:8080",
+				"http://127.0.0.1:8080",
+			},
 			AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "Idempotency-Key"},
 			ExposeHeaders:    []string{"Content-Length"},
 			AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
@@ -152,11 +155,23 @@ func main() {
 		keyFile = fmt.Sprintf("config/tls/release/%s", cfg.Certificate.Key)
 	}
 
+	// debug用
+	certFile = ""
+	keyFile = ""
+
 	go func() {
-		log.Println("[INFO] listening on https://0.0.0.0:8443")
-		if err := srv.ListenAndServeTLS(certFile, keyFile); err != nil && err != http.ErrServerClosed {
-			log.Fatal(err)
+		if certFile == "" || keyFile == "" {
+			log.Println("[INFO] no tls listening on http://0.0.0.0:8443")
+			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Fatal(err)
+			}
+		} else {
+			log.Println("[INFO] listening on https://0.0.0.0:8443")
+			if err := srv.ListenAndServeTLS(certFile, keyFile); err != nil && err != http.ErrServerClosed {
+				log.Fatal(err)
+			}
 		}
+
 	}()
 
 	// Graceful shutdown
