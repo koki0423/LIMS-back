@@ -3,6 +3,7 @@ package assets
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -257,7 +258,6 @@ func (s *Store) CreateAssetTx(
 			location, last_checked_at, last_checked_by, notes)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(), ?, ?)`
 
-
 	res, err := tx.ExecContext(ctx, qIns,
 		masterID,
 		in.Serial,
@@ -444,7 +444,9 @@ func (s *Store) ListAssets(ctx context.Context, q AssetSearchQuery, p Page) ([]A
 
 	// 一覧取得用 SQL
 	selectSQL := `
-	SELECT a.asset_id, a.asset_master_id, m.management_number, a.serial, a.quantity, a.purchased_at, a.status_id,
+	SELECT a.asset_id, a.asset_master_id, m.management_number,
+	COALESCE(m.name, '') as name,
+	a.serial, a.quantity, a.purchased_at, a.status_id,
 		a.owner, a.default_location, a.location, a.last_checked_at, a.last_checked_by, a.notes
 	` + baseFrom + `
 	` + where + `
@@ -466,7 +468,7 @@ func (s *Store) ListAssets(ctx context.Context, q AssetSearchQuery, p Page) ([]A
 		var serial, loc, lcb, notes sql.NullString
 		var lct sql.NullTime
 		if err := rows.Scan(
-			&r.AssetID, &r.AssetMasterID, &r.ManagementNumber, &serial, &r.Quantity, &r.PurchasedAt, &r.StatusID,
+			&r.AssetID, &r.AssetMasterID, &r.ManagementNumber,&r.Name, &serial, &r.Quantity, &r.PurchasedAt, &r.StatusID,
 			&r.Owner, &r.DefaultLocation, &loc, &lct, &lcb, &notes,
 		); err != nil {
 			return nil, 0, err
@@ -505,4 +507,105 @@ func (s *Store) ListAssets(ctx context.Context, q AssetSearchQuery, p Page) ([]A
 	}
 
 	return out, total, nil
+}
+
+func (s *Store) GetAssetSetByMng(ctx context.Context, mng string) (*AssetSetResponse, error) {
+	const q = `
+SELECT
+	m.asset_master_id,
+	m.management_number, m.name, m.management_category_id, m.genre_id, m.manufacturer, m.model, m.created_at,
+	a.asset_id, a.asset_master_id, a.serial, a.quantity, a.purchased_at, a.status_id,
+	a.owner, a.default_location, a.location, a.last_checked_at, a.last_checked_by, a.notes
+FROM assets_master AS m
+JOIN assets AS a
+	ON a.asset_master_id = m.asset_master_id
+WHERE m.management_number = ?;
+`
+
+	row := s.db.QueryRowContext(ctx, q, mng)
+
+	// NULLになり得る列
+	var modelNS sql.NullString
+	var serialNS sql.NullString
+	var locationNS sql.NullString
+	var lastCheckedAtNT sql.NullTime
+	var lastCheckedByNS sql.NullString
+	var notesNS sql.NullString
+
+	// 数値は一旦 unsigned に寄せて受ける（DB側が signed でも Scan は大体通る）
+	var (
+		masterID           uint64
+		managementNumber   string
+		name               string
+		managementCategory uint64
+		genreID            uint64
+		manufacturer       string
+		createdAt          time.Time
+		assetID            uint64
+		assetMasterID      uint64
+		quantity           uint64
+		purchasedAt        time.Time
+		statusID           uint64
+		owner              string
+		defaultLocation    string
+	)
+
+	err := row.Scan(
+		&masterID,
+		&managementNumber, &name, &managementCategory, &genreID, &manufacturer, &modelNS, &createdAt,
+		&assetID, &assetMasterID, &serialNS, &quantity, &purchasedAt, &statusID,
+		&owner, &defaultLocation, &locationNS, &lastCheckedAtNT, &lastCheckedByNS, &notesNS,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, err // 必要なら独自NotFoundエラーに置き換え
+		}
+		return nil, err
+	}
+
+	r := &AssetSetResponse{
+		Master: AssetMasterResponse{
+			AssetMasterID:        masterID,
+			ManagementNumber:     managementNumber,
+			Name:                 name,
+			ManagementCategoryID: uint(managementCategory),
+			GenreID:              uint(genreID),
+			Manufacturer:         manufacturer,
+			Model:                ptrString(modelNS),
+			CreatedAt:            createdAt,
+		},
+		Asset: AssetResponse{
+			AssetID:          assetID,
+			AssetMasterID:    assetMasterID,
+			ManagementNumber: managementNumber, // SELECTに無いのでmaster側から入れる
+			Serial:           ptrString(serialNS),
+			Quantity:         uint(quantity),
+			PurchasedAt:      purchasedAt,
+			StatusID:         uint(statusID),
+			Owner:            owner,
+			DefaultLocation:  defaultLocation,
+			Location:         ptrString(locationNS),
+			LastCheckedAt:    ptrTime(lastCheckedAtNT),
+			LastCheckedBy:    ptrString(lastCheckedByNS),
+			Notes:            ptrString(notesNS),
+		},
+	}
+
+	return r, nil
+}
+
+func ptrString(ns sql.NullString) *string {
+	if !ns.Valid {
+		return nil
+	}
+	v := ns.String
+	return &v
+}
+
+func ptrTime(nt sql.NullTime) *time.Time {
+	if !nt.Valid {
+		return nil
+	}
+	v := nt.Time
+	return &v
 }

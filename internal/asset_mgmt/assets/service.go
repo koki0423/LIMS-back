@@ -204,3 +204,17 @@ func (s *Service) UpdateAsset(ctx context.Context, id uint64, in UpdateAssetRequ
 	}
 	return *out, nil
 }
+
+
+// ===== Asset Set =====
+
+func (s *Service) GetAssetSet(ctx context.Context, managementNumber string) (AssetSetResponse, error) {
+	out, err := s.store.GetAssetSetByMng(ctx, managementNumber)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return AssetSetResponse{}, ErrNotFound("asset set not found")
+		}
+		return AssetSetResponse{}, err
+	}
+	return *out, nil
+}

@@ -26,6 +26,10 @@ func RegisterRoutes(r gin.IRoutes, svc *Service) {
 	r.GET("/assets", h.ListAssets)
 	r.GET("/assets/:asset_id", h.GetAsset)
 	r.PUT("/assets/:asset_id", h.UpdateAsset)
+
+	// assest-set
+	r.GET("/assets/pair/:management_number", h.GetAssetSet)
+
 }
 
 // ===== masters =====
@@ -182,6 +186,18 @@ func (h *Handler) UpdateAsset(c *gin.Context) {
 		return
 	}
 	res, err := h.svc.UpdateAsset(c.Request.Context(), id, req)
+	if err != nil {
+		c.JSON(toHTTPStatus(err), apiErrFrom(err))
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
+// ===== asset-set =====
+
+func (h *Handler) GetAssetSet(c *gin.Context) {
+	mng := c.Param("management_number")
+	res, err := h.svc.GetAssetSet(c.Request.Context(), mng)
 	if err != nil {
 		c.JSON(toHTTPStatus(err), apiErrFrom(err))
 		return
