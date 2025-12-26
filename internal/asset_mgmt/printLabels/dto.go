@@ -37,8 +37,8 @@ type PrintResponse struct {
 	Error   *APIError `json:"error,omitempty"`
 }
 
-// リクエスト例
 /*
+/api/v2/assets/print リクエスト例
 	{
 		"config": {
 			"use_halfcut": true,
@@ -55,4 +55,22 @@ type PrintResponse struct {
 		"width": 12,
 		"type": "qrcode"
 	}
+*/
+
+/*
+/api/v2/assets/print/batch リクエスト例
+{
+  "config": {
+    "use_halfcut": false,
+    "confirm_tape_width": false,
+    "enable_print_log": true
+  },
+  "width": 18,
+  "type": "code128",
+  "labels": [
+    {"checked": true,  "col_b": "プロジェクター", "col_c": "事務", "col_d": "OFS-20250811-0001", "col_e": "OFS-20250811-0001"},
+    {"checked": false, "col_b": "SKIP",    "col_c": "",  "col_d": "",  "col_e": ""},
+    {"checked": true,  "col_b": "スイッチ", "col_c": "NW", "col_d": "OFS-20250811-0002", "col_e": "OFS-20250811-0002"}
+  ]
+}
 */
