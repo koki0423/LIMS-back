@@ -1,9 +1,18 @@
 package printLabels
 
 // ===== Requests =====
+// PrintRequest: /assets/print
 type PrintRequest struct {
 	Config PrintConfig `json:"config" binding:"required"`
 	Label  LabelData   `json:"label"  binding:"required"`
+	Width  int         `json:"width"  binding:"required"`
+	Type   string      `json:"type"   binding:"required"`
+}
+
+// BatchPrintRequest: /print/batch
+type BatchPrintRequest struct {
+	Config PrintConfig `json:"config" binding:"required"`
+	Labels []LabelData `json:"labels" binding:"required"`
 	Width  int         `json:"width"  binding:"required"`
 	Type   string      `json:"type"   binding:"required"`
 }
@@ -22,6 +31,7 @@ type LabelData struct {
 	ColE    string `json:"col_e"   binding:"required"`
 }
 
+// ===== Responses =====
 type PrintResponse struct {
 	Success bool      `json:"success"`
 	Error   *APIError `json:"error,omitempty"`
