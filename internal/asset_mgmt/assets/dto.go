@@ -47,6 +47,11 @@ type UpdateAssetRequest struct {
 	Notes           *string    `json:"notes,omitempty"`
 }
 
+type CreateAssetSetRequest struct {
+	Master CreateAssetMasterRequest `json:"master" binding:"required"`
+	Asset  CreateAssetRequest       `json:"asset" binding:"required"`
+}
+
 // ===== Responses =====
 
 type AssetMasterResponse struct {
@@ -63,7 +68,8 @@ type AssetMasterResponse struct {
 type AssetResponse struct {
 	AssetID          uint64     `json:"asset_id"`
 	AssetMasterID    uint64     `json:"asset_master_id"`
-	ManagementNumber string     `json:"management_number"`
+	ManagementNumber string     `json:"management_number"`	//なんかで必要になったから入れたんだけど用途忘れた．削除禁止
+	Name             string     `json:"name"`				//フロントエンドで必要になったから追加．責任分離の観点から将来的に消したい
 	Serial           *string    `json:"serial,omitempty"`
 	Quantity         uint       `json:"quantity"`
 	PurchasedAt      time.Time  `json:"purchased_at"`
@@ -74,6 +80,27 @@ type AssetResponse struct {
 	LastCheckedAt    *time.Time `json:"last_checked_at,omitempty"`
 	LastCheckedBy    *string    `json:"last_checked_by,omitempty"`
 	Notes            *string    `json:"notes,omitempty"`
+}
+
+type AssetSetResponse struct {
+	Master AssetMasterResponse `json:"master"`
+	Asset  AssetResponse       `json:"asset"`
+}
+
+type ImportAssetsResponse struct {
+	Total   int               `json:"total"`
+	OkCount int               `json:"ok_count"`
+	NgCount int               `json:"ng_count"`
+	Results []ImportRowResult `json:"results"`
+}
+
+type ImportRowResult struct {
+	Row              int     `json:"row"` // 1-based (ヘッダ行を除いたデータ行番号にしたいなら調整)
+	Ok               bool    `json:"ok"`
+	Error            *string `json:"error,omitempty"`
+	MasterID         *uint64 `json:"master_id,omitempty"`
+	AssetID          *uint64 `json:"asset_id,omitempty"`
+	ManagementNumber *string `json:"management_number,omitempty"`
 }
 
 // ===== Listing helpers =====

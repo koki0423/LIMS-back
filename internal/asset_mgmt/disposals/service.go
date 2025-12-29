@@ -100,9 +100,9 @@ func (s *Service) CreateDisposal(ctx context.Context, managementNumber string, i
 		if err := s.store.UpdateAssetQuantity(ctx, tx, assetID, -int(in.Quantity)); err != nil {
 			return err
 		}
-		// log.Printf("Updated assetID: %d quantity by %d", assetID, -int(in.Quantity))
+		log.Printf("Updated assetID: %d quantity by %d", assetID, -int(in.Quantity))
 
-		// 減算後が0ならだけステータス変更
+		// 減算後が0ならステータスだけ変更
 		newQty := int(qty) - int(in.Quantity)
 		if newQty == 0 {
 			const StatusZeroStock = 5

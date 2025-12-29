@@ -3,6 +3,7 @@ package assets
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -257,7 +258,6 @@ func (s *Store) CreateAssetTx(
 			location, last_checked_at, last_checked_by, notes)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(), ?, ?)`
 
-
 	res, err := tx.ExecContext(ctx, qIns,
 		masterID,
 		in.Serial,
@@ -444,7 +444,9 @@ func (s *Store) ListAssets(ctx context.Context, q AssetSearchQuery, p Page) ([]A
 
 	// 一覧取得用 SQL
 	selectSQL := `
-	SELECT a.asset_id, a.asset_master_id, m.management_number, a.serial, a.quantity, a.purchased_at, a.status_id,
+	SELECT a.asset_id, a.asset_master_id, m.management_number,
+	COALESCE(m.name, '') as name,
+	a.serial, a.quantity, a.purchased_at, a.status_id,
 		a.owner, a.default_location, a.location, a.last_checked_at, a.last_checked_by, a.notes
 	` + baseFrom + `
 	` + where + `
@@ -466,7 +468,7 @@ func (s *Store) ListAssets(ctx context.Context, q AssetSearchQuery, p Page) ([]A
 		var serial, loc, lcb, notes sql.NullString
 		var lct sql.NullTime
 		if err := rows.Scan(
-			&r.AssetID, &r.AssetMasterID, &r.ManagementNumber, &serial, &r.Quantity, &r.PurchasedAt, &r.StatusID,
+			&r.AssetID, &r.AssetMasterID, &r.ManagementNumber,&r.Name, &serial, &r.Quantity, &r.PurchasedAt, &r.StatusID,
 			&r.Owner, &r.DefaultLocation, &loc, &lct, &lcb, &notes,
 		); err != nil {
 			return nil, 0, err
@@ -505,4 +507,239 @@ func (s *Store) ListAssets(ctx context.Context, q AssetSearchQuery, p Page) ([]A
 	}
 
 	return out, total, nil
+}
+
+func (s *Store) GetAssetSetByMng(ctx context.Context, mng string) (*AssetSetResponse, error) {
+	const q = `
+SELECT
+	m.asset_master_id,
+	m.management_number, m.name, m.management_category_id, m.genre_id, m.manufacturer, m.model, m.created_at,
+	a.asset_id, a.asset_master_id, a.serial, a.quantity, a.purchased_at, a.status_id,
+	a.owner, a.default_location, a.location, a.last_checked_at, a.last_checked_by, a.notes
+FROM assets_master AS m
+JOIN assets AS a
+	ON a.asset_master_id = m.asset_master_id
+WHERE m.management_number = ?;
+`
+
+	row := s.db.QueryRowContext(ctx, q, mng)
+
+	// NULLになり得る列
+	var modelNS sql.NullString
+	var serialNS sql.NullString
+	var locationNS sql.NullString
+	var lastCheckedAtNT sql.NullTime
+	var lastCheckedByNS sql.NullString
+	var notesNS sql.NullString
+
+	// 数値は一旦 unsigned に寄せて受ける（DB側が signed でも Scan は大体通る）
+	var (
+		masterID           uint64
+		managementNumber   string
+		name               string
+		managementCategory uint64
+		genreID            uint64
+		manufacturer       string
+		createdAt          time.Time
+		assetID            uint64
+		assetMasterID      uint64
+		quantity           uint64
+		purchasedAt        time.Time
+		statusID           uint64
+		owner              string
+		defaultLocation    string
+	)
+
+	err := row.Scan(
+		&masterID,
+		&managementNumber, &name, &managementCategory, &genreID, &manufacturer, &modelNS, &createdAt,
+		&assetID, &assetMasterID, &serialNS, &quantity, &purchasedAt, &statusID,
+		&owner, &defaultLocation, &locationNS, &lastCheckedAtNT, &lastCheckedByNS, &notesNS,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, err // 必要なら独自NotFoundエラーに置き換え
+		}
+		return nil, err
+	}
+
+	r := &AssetSetResponse{
+		Master: AssetMasterResponse{
+			AssetMasterID:        masterID,
+			ManagementNumber:     managementNumber,
+			Name:                 name,
+			ManagementCategoryID: uint(managementCategory),
+			GenreID:              uint(genreID),
+			Manufacturer:         manufacturer,
+			Model:                ptrString(modelNS),
+			CreatedAt:            createdAt,
+		},
+		Asset: AssetResponse{
+			AssetID:          assetID,
+			AssetMasterID:    assetMasterID,
+			ManagementNumber: managementNumber, // SELECTに無いのでmaster側から入れる
+			Serial:           ptrString(serialNS),
+			Quantity:         uint(quantity),
+			PurchasedAt:      purchasedAt,
+			StatusID:         uint(statusID),
+			Owner:            owner,
+			DefaultLocation:  defaultLocation,
+			Location:         ptrString(locationNS),
+			LastCheckedAt:    ptrTime(lastCheckedAtNT),
+			LastCheckedBy:    ptrString(lastCheckedByNS),
+			Notes:            ptrString(notesNS),
+		},
+	}
+
+	return r, nil
+}
+
+// ===== master and asset =====
+func (s *Store) InsertMasterTmpTx(ctx context.Context, tx *sql.Tx, in CreateAssetMasterRequest, tmpMng string) (uint64, error) {
+	const q = `
+	INSERT INTO assets_master
+	(management_number, name, management_category_id, genre_id, manufacturer, model, created_at)
+	VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`
+	res, err := tx.ExecContext(ctx, q, tmpMng, in.Name, in.ManagementCategoryID, in.GenreID, in.Manufacturer, in.Model)
+	if err != nil {
+		return 0, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	return uint64(id), nil
+}
+
+func (s *Store) UpdateMngToFinalTx(ctx context.Context, tx *sql.Tx, id uint64, tmpMng string, pad int) error {
+	q := fmt.Sprintf(`
+	UPDATE assets_master m
+	JOIN asset_genres g ON g.genre_id = m.genre_id
+	SET m.management_number = CONCAT(g.genre_code, '-', DATE_FORMAT(m.created_at, '%%Y%%m%%d'), '-', LPAD(m.asset_master_id, %d, '0'))
+	WHERE m.asset_master_id = ? AND m.management_number = ?`, pad)
+
+	res, err := tx.ExecContext(ctx, q, id, tmpMng)
+	if err != nil {
+		return err
+	}
+	if aff, _ := res.RowsAffected(); aff != 1 {
+		return ErrConflict("no row updated")
+	}
+	return nil
+}
+
+func (s *Store) InsertAssetTx(ctx context.Context, tx *sql.Tx, in CreateAssetRequest, masterID uint64) (uint64, error) {
+	const qIns = `
+	INSERT INTO assets
+		(asset_master_id, serial, quantity, purchased_at, status_id, owner, default_location,
+		location, last_checked_at, last_checked_by, notes)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(), ?, ?)`
+
+	location := ""
+	if in.Location != nil {
+		location = *in.Location
+	}
+
+	lastCheckedBy := ""
+	if in.LastCheckedBy != nil {
+		lastCheckedBy = *in.LastCheckedBy
+	}
+
+	res, err := tx.ExecContext(ctx, qIns,
+		masterID,
+		in.Serial,
+		in.Quantity,
+		in.PurchasedAt,
+		in.StatusID,
+		in.Owner,
+		in.DefaultLocation,
+		location,
+		lastCheckedBy,
+		in.Notes,
+	)
+	if err != nil {
+		return 0, err
+	}
+
+	id64, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	return uint64(id64), nil
+}
+
+// ===== batch import =====
+func (s *Store) LoadManagementCategoryIDSet(ctx context.Context) (map[uint]bool, error) {
+	const q = `SELECT management_category_id FROM asset_management_categories`
+	rows, err := s.db.QueryContext(ctx, q)
+	if err != nil {
+		return map[uint]bool{}, err
+	}
+	defer rows.Close()
+
+	m := make(map[uint]bool)
+	for rows.Next() {
+		var id uint
+		if err := rows.Scan(&id); err != nil {
+			return map[uint]bool{}, err
+		}
+		m[id] = true
+	}
+	return m, rows.Err()
+}
+
+func (s *Store) LoadGenreIDSet(ctx context.Context) (map[uint]bool, error) {
+	const q = `SELECT genre_id FROM asset_genres`
+	rows, err := s.db.QueryContext(ctx, q)
+	if err != nil {
+		return map[uint]bool{}, err
+	}
+	defer rows.Close()
+
+	m := make(map[uint]bool)
+	for rows.Next() {
+		var id uint
+		if err := rows.Scan(&id); err != nil {
+			return map[uint]bool{}, err
+		}
+		m[id] = true
+	}
+	return m, rows.Err()
+}
+
+func (s *Store) LoadStatusIDSet(ctx context.Context) (map[uint]bool, error) {
+	const q = `SELECT status_id FROM asset_statuses`
+	rows, err := s.db.QueryContext(ctx, q)
+	if err != nil {
+		return map[uint]bool{}, err
+	}
+	defer rows.Close()
+
+	m := make(map[uint]bool)
+	for rows.Next() {
+		var id uint
+		if err := rows.Scan(&id); err != nil {
+			return map[uint]bool{}, err
+		}
+		m[id] = true
+	}
+	return m, rows.Err()
+}
+
+
+// ===== Helpers =====
+func ptrString(ns sql.NullString) *string {
+	if !ns.Valid {
+		return nil
+	}
+	v := ns.String
+	return &v
+}
+
+func ptrTime(nt sql.NullTime) *time.Time {
+	if !nt.Valid {
+		return nil
+	}
+	v := nt.Time
+	return &v
 }

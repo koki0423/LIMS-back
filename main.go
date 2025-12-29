@@ -142,6 +142,7 @@ func main() {
 		Handler: r,
 	}
 
+	// TLSはなくても動くこと確認したからしばらくはこのままにする
 	var certFile, keyFile string
 
 	// TLS設定
@@ -159,7 +160,7 @@ func main() {
 	certFile = ""
 	keyFile = ""
 
-	go func() {
+	go func(certFile, keyFile string) {
 		if certFile == "" || keyFile == "" {
 			log.Println("[INFO] no tls listening on http://0.0.0.0:8443")
 			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -171,8 +172,7 @@ func main() {
 				log.Fatal(err)
 			}
 		}
-
-	}()
+	}(certFile, keyFile)
 
 	// Graceful shutdown
 	quit := make(chan os.Signal, 1)
