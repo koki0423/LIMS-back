@@ -30,8 +30,7 @@ func RegisterRoutes(r gin.IRoutes, svc *Service) {
 
 	// assest-set
 	r.GET("/assets/pair/:management_number", h.GetAssetSet)
-	r.POST("/assets/import", h.HandleImportAssets)
-
+	r.POST("/assets/import", h.HandleImportAssets) //curl -X POST "http://localhost:8443/api/v2/assets/import?mode=commit" -F "file=@./asset.csv"
 }
 
 // ===== masters =====
