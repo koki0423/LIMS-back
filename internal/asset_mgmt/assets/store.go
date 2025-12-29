@@ -594,6 +594,82 @@ WHERE m.management_number = ?;
 	return r, nil
 }
 
+// ===== master and asset =====
+func (s *Store) InsertMasterTmpTx(ctx context.Context, tx *sql.Tx, in CreateAssetMasterRequest, tmpMng string) (uint64, error) {
+	const q = `
+	INSERT INTO assets_master
+	(management_number, name, management_category_id, genre_id, manufacturer, model, created_at)
+	VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`
+	res, err := tx.ExecContext(ctx, q, tmpMng, in.Name, in.ManagementCategoryID, in.GenreID, in.Manufacturer, in.Model)
+	if err != nil {
+		return 0, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	return uint64(id), nil
+}
+
+func (s *Store) UpdateMngToFinalTx(ctx context.Context, tx *sql.Tx, id uint64, tmpMng string, pad int) error {
+	q := fmt.Sprintf(`
+	UPDATE assets_master m
+	JOIN asset_genres g ON g.genre_id = m.genre_id
+	SET m.management_number = CONCAT(g.genre_code, '-', DATE_FORMAT(m.created_at, '%%Y%%m%%d'), '-', LPAD(m.asset_master_id, %d, '0'))
+	WHERE m.asset_master_id = ? AND m.management_number = ?`, pad)
+
+	res, err := tx.ExecContext(ctx, q, id, tmpMng)
+	if err != nil {
+		return err
+	}
+	if aff, _ := res.RowsAffected(); aff != 1 {
+		return ErrConflict("no row updated")
+	}
+	return nil
+}
+
+func (s *Store) InsertAssetTx(ctx context.Context, tx *sql.Tx, in CreateAssetRequest, masterID uint64) (uint64, error) {
+	const qIns = `
+	INSERT INTO assets
+		(asset_master_id, serial, quantity, purchased_at, status_id, owner, default_location,
+		location, last_checked_at, last_checked_by, notes)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(), ?, ?)`
+
+	location := ""
+	if in.Location != nil {
+		location = *in.Location
+	}
+
+	lastCheckedBy := ""
+	if in.LastCheckedBy != nil {
+		lastCheckedBy = *in.LastCheckedBy
+	}
+
+	res, err := tx.ExecContext(ctx, qIns,
+		masterID,
+		in.Serial,
+		in.Quantity,
+		in.PurchasedAt,
+		in.StatusID,
+		in.Owner,
+		in.DefaultLocation,
+		location,
+		lastCheckedBy,
+		in.Notes,
+	)
+	if err != nil {
+		return 0, err
+	}
+
+	id64, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	return uint64(id64), nil
+}
+
+
+// ===== Helpers =====
 func ptrString(ns sql.NullString) *string {
 	if !ns.Valid {
 		return nil

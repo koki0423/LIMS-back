@@ -194,6 +194,21 @@ func (h *Handler) UpdateAsset(c *gin.Context) {
 }
 
 // ===== asset-set =====
+// 将来的にcreateAssetMasterとCreateAssetを廃止してこっちへ移行．ただしAndroidとフロントエンドの対応が終わり次第移行すること．
+func (h *Handler) RegisterAsset(c *gin.Context) {
+	var req CreateAssetSetRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		log.Printf("CreateAssetSet: bind error: %v", err)
+		c.JSON(http.StatusBadRequest, apiErr(CodeInvalidArgument, "invalid json"))
+		return
+	}
+	res, err := h.svc.CreateAssetSet(c.Request.Context(), req)
+	if err != nil {
+		c.JSON(toHTTPStatus(err), apiErrFrom(err))
+		return
+	}
+	c.JSON(http.StatusCreated, res)
+}
 
 func (h *Handler) GetAssetSet(c *gin.Context) {
 	mng := c.Param("management_number")

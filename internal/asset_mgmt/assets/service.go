@@ -207,6 +207,92 @@ func (s *Service) UpdateAsset(ctx context.Context, id uint64, in UpdateAssetRequ
 
 
 // ===== Asset Set =====
+// 将来的にcreateAssetMasterとCreateAssetを廃止してこっちへ移行．ただしAndroidとフロントエンドの対応が終わり次第移行すること．
+func (s *Service) CreateAssetSet(ctx context.Context, req CreateAssetSetRequest) (AssetSetResponse, error) {
+	// ---- validate master ----
+	if strings.TrimSpace(req.Master.Name) == "" ||
+		strings.TrimSpace(req.Master.Manufacturer) == "" ||
+		req.Master.ManagementCategoryID == 0 ||
+		req.Master.GenreID == 0 {
+		return AssetSetResponse{}, ErrInvalid("master.name, master.manufacturer, master.management_category_id, master.genre_id are required")
+	}
+
+	// ---- validate asset ----
+	if strings.TrimSpace(req.Asset.Owner) == "" || strings.TrimSpace(req.Asset.DefaultLocation) == "" {
+		return AssetSetResponse{}, ErrInvalid("asset.owner/default_location required")
+	}
+	if req.Asset.PurchasedAt.IsZero() {
+		return AssetSetResponse{}, ErrInvalid("asset.purchased_at required")
+	}
+
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return AssetSetResponse{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	// 1) master 仮INSERT
+	tmpMng := "TMP-" + ulid.Make().String()
+	masterID, err := s.store.InsertMasterTmpTx(ctx, tx, req.Master, tmpMng)
+	if err != nil {
+		var me *mysql.MySQLError
+		if errors.As(err, &me) {
+			if me.Number == 1452 {
+				return AssetSetResponse{}, ErrInvalid("invalid management_category_id or genre_id")
+			}
+			if me.Number == 1062 {
+				return AssetSetResponse{}, ErrConflict("management_number already exists")
+			}
+		}
+		return AssetSetResponse{}, err
+	}
+
+	// 2) master 確定番号に置換
+	if err := s.store.UpdateMngToFinalTx(ctx, tx, masterID, tmpMng, 5); err != nil {
+		var ae *APIError
+		if errors.As(err, &ae) && ae.Code == CodeConflict {
+			return AssetSetResponse{}, ErrConflict("conflict while finalizing management_number")
+		}
+		return AssetSetResponse{}, err
+	}
+
+	// 3) asset INSERT
+	assetID, err := s.store.InsertAssetTx(ctx, tx, req.Asset, masterID)
+	if err != nil {
+		var me *mysql.MySQLError
+		if errors.As(err, &me) {
+			if me.Number == 1452 {
+				return AssetSetResponse{}, ErrInvalid("invalid foreign key (status_id etc)")
+			}
+			if me.Number == 1062 {
+				return AssetSetResponse{}, ErrConflict("duplicate key")
+			}
+		}
+		return AssetSetResponse{}, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return AssetSetResponse{}, err
+	}
+	committed = true
+
+	// 4) 返却用に取り直し（コミット後、DBからフルDTO）
+	m, err := s.store.GetMasterByID(ctx, masterID)
+	if err != nil {
+		return AssetSetResponse{}, err
+	}
+	a, err := s.store.GetAssetByID(ctx, assetID)
+	if err != nil {
+		return AssetSetResponse{}, err
+	}
+
+	return AssetSetResponse{Master: *m, Asset: *a}, nil
+}
 
 func (s *Service) GetAssetSet(ctx context.Context, managementNumber string) (AssetSetResponse, error) {
 	out, err := s.store.GetAssetSetByMng(ctx, managementNumber)

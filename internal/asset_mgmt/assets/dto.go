@@ -47,6 +47,11 @@ type UpdateAssetRequest struct {
 	Notes           *string    `json:"notes,omitempty"`
 }
 
+type CreateAssetSetRequest struct {
+	Master CreateAssetMasterRequest `json:"master" binding:"required"`
+	Asset  CreateAssetRequest       `json:"asset" binding:"required"`
+}
+
 // ===== Responses =====
 
 type AssetMasterResponse struct {
