@@ -7,6 +7,10 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"strconv"
+	"time"
+	"encoding/csv"
+	"io"
 
 	mysql "github.com/go-sql-driver/mysql"
 	ulid "github.com/oklog/ulid/v2"
@@ -303,4 +307,238 @@ func (s *Service) GetAssetSet(ctx context.Context, managementNumber string) (Ass
 		return AssetSetResponse{}, err
 	}
 	return *out, nil
+}
+
+// ===== Batch Import =====
+func (s *Service) ImportAssetsCSV(ctx context.Context, r *csv.Reader, mode string) (ImportAssetsResponse, error) {
+	var out ImportAssetsResponse
+
+	// 1) ヘッダ
+	header, err := r.Read()
+	if err != nil {
+		if err == io.EOF {
+			return out, ErrInvalid("empty csv")
+		}
+		return out, err
+	}
+	col := make(map[string]int)
+	for i := 0; i < len(header); i++ {
+		k := strings.ToLower(strings.TrimSpace(header[i]))
+		col[k] = i
+	}
+
+	// 必須カラム（あなたのstructに合わせる）
+	required := []string{
+		"name", "management_category_id", "genre_id", "manufacturer",
+		"purchased_at", "status_id", "owner", "default_location",
+	}
+	for i := 0; i < len(required); i++ {
+		if _, ok := col[required[i]]; !ok {
+			return out, ErrInvalid("missing required column: " + required[i])
+		}
+	}
+
+	// 2) 参照IDを事前取得（パフォーマンス＆早期バリデーション）
+	// ※テーブル名が違う場合は store側の実装だけ調整してね
+	validCats, _ := s.store.LoadManagementCategoryIDSet(ctx)
+	validGenres, _ := s.store.LoadGenreIDSet(ctx)
+	validStatus, _ := s.store.LoadStatusIDSet(ctx)
+
+	rowNum := 1 // ヘッダを1行目として数えるならここから。データ行だけにしたいなら 0からでOK
+	for {
+		rec, err := r.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			rowNum++
+			msg := err.Error()
+			out.Results = append(out.Results, ImportRowResult{Row: rowNum, Ok: false, Error: &msg})
+			continue
+		}
+		rowNum++
+
+		req, perr := parseAssetSetFromCSVRow(rec, col)
+		if perr != nil {
+			msg := perr.Error()
+			out.Results = append(out.Results, ImportRowResult{Row: rowNum, Ok: false, Error: &msg})
+			continue
+		}
+
+		// ID存在チェック（セットが空ならスキップ＝store実装未調整でも動く）
+		if len(validCats) > 0 {
+			if !validCats[req.Master.ManagementCategoryID] {
+				msg := "management_category_id not found"
+				out.Results = append(out.Results, ImportRowResult{Row: rowNum, Ok: false, Error: &msg})
+				continue
+			}
+		}
+		if len(validGenres) > 0 {
+			if !validGenres[req.Master.GenreID] {
+				msg := "genre_id not found"
+				out.Results = append(out.Results, ImportRowResult{Row: rowNum, Ok: false, Error: &msg})
+				continue
+			}
+		}
+		if len(validStatus) > 0 {
+			if !validStatus[req.Asset.StatusID] {
+				msg := "status_id not found"
+				out.Results = append(out.Results, ImportRowResult{Row: rowNum, Ok: false, Error: &msg})
+				continue
+			}
+		}
+
+		// dry_run: ここまででOKにする
+		if mode == "dry_run" {
+			out.Results = append(out.Results, ImportRowResult{Row: rowNum, Ok: true})
+			continue
+		}
+
+		// commit: 1行ずつTx（CreateAssetSetがTx内で完結している前提）
+		resp, err := s.CreateAssetSet(ctx, req)
+		if err != nil {
+			msg := err.Error()
+			out.Results = append(out.Results, ImportRowResult{Row: rowNum, Ok: false, Error: &msg})
+			continue
+		}
+
+		mid := resp.Master.AssetMasterID
+		aid := resp.Asset.AssetID
+		mng := resp.Master.ManagementNumber
+		out.Results = append(out.Results, ImportRowResult{
+			Row:              rowNum,
+			Ok:               true,
+			MasterID:         &mid,
+			AssetID:          &aid,
+			ManagementNumber: &mng,
+		})
+	}
+
+	out.Total = len(out.Results)
+	for i := 0; i < len(out.Results); i++ {
+		if out.Results[i].Ok {
+			out.OkCount++
+		} else {
+			out.NgCount++
+		}
+	}
+	return out, nil
+}
+
+// 1行のCSVを CreateAssetSetRequest に変換（RFC3339前提）
+func parseAssetSetFromCSVRow(rec []string, col map[string]int) (CreateAssetSetRequest, error) {
+	var req CreateAssetSetRequest
+
+	get := func(key string) string {
+		idx, ok := col[key]
+		if !ok {
+			return ""
+		}
+		if idx < 0 || idx >= len(rec) {
+			return ""
+		}
+		return strings.TrimSpace(rec[idx])
+	}
+
+	// ---- master ----
+	req.Master.Name = get("name")
+	req.Master.Manufacturer = get("manufacturer")
+
+	mcid, err := parseUint(get("management_category_id"))
+	if err != nil {
+		return req, ErrInvalid("management_category_id must be uint")
+	}
+	gid, err := parseUint(get("genre_id"))
+	if err != nil {
+		return req, ErrInvalid("genre_id must be uint")
+	}
+	req.Master.ManagementCategoryID = mcid
+	req.Master.GenreID = gid
+
+	model := get("model")
+	if model != "" {
+		req.Master.Model = &model
+	}
+
+	// ---- asset ----
+	serial := get("serial")
+	if serial != "" {
+		req.Asset.Serial = &serial
+	}
+
+	qtyStr := get("quantity")
+	if qtyStr == "" {
+		req.Asset.Quantity = 1 // 空欄は 1（運用上ラク）
+	} else {
+		q, e := parseUint(qtyStr)
+		if e != nil {
+			return req, ErrInvalid("quantity must be uint")
+		}
+		req.Asset.Quantity = q
+	}
+
+	pat := get("purchased_at")
+	if pat == "" {
+		return req, ErrInvalid("purchased_at required")
+	}
+	t, err := time.Parse(time.RFC3339, pat)
+	if err != nil {
+		return req, ErrInvalid("purchased_at must be RFC3339")
+	}
+	req.Asset.PurchasedAt = t
+
+	sid, err := parseUint(get("status_id"))
+	if err != nil {
+		return req, ErrInvalid("status_id must be uint")
+	}
+	req.Asset.StatusID = sid
+
+	req.Asset.Owner = get("owner")
+	req.Asset.DefaultLocation = get("default_location")
+
+	loc := get("location")
+	if loc != "" {
+		req.Asset.Location = &loc
+	}
+
+	lca := get("last_checked_at")
+	if lca != "" {
+		tt, e := time.Parse(time.RFC3339, lca)
+		if e != nil {
+			return req, ErrInvalid("last_checked_at must be RFC3339 when present")
+		}
+		req.Asset.LastCheckedAt = &tt
+	}
+
+	lcb := get("last_checked_by")
+	if lcb != "" {
+		req.Asset.LastCheckedBy = &lcb
+	}
+
+	notes := get("notes")
+	if notes != "" {
+		req.Asset.Notes = &notes
+	}
+
+	// 最低限の必須チェック（Ginのbinding相当）
+	if req.Master.Name == "" || req.Master.Manufacturer == "" || req.Master.ManagementCategoryID == 0 || req.Master.GenreID == 0 {
+		return req, ErrInvalid("master fields required")
+	}
+	if req.Asset.Owner == "" || req.Asset.DefaultLocation == "" || req.Asset.StatusID == 0 {
+		return req, ErrInvalid("asset fields required")
+	}
+
+	return req, nil
+}
+
+func parseUint(s string) (uint, error) {
+	// 先頭/末尾空白は呼び元でTrim済み
+	if s == "" {
+		return 0, strconv.ErrSyntax
+	}
+	u64, err := strconv.ParseUint(s, 10, 32)
+	if err != nil {
+		return 0, err
+	}
+	return uint(u64), nil
 }

@@ -668,6 +668,64 @@ func (s *Store) InsertAssetTx(ctx context.Context, tx *sql.Tx, in CreateAssetReq
 	return uint64(id64), nil
 }
 
+// ===== batch import =====
+func (s *Store) LoadManagementCategoryIDSet(ctx context.Context) (map[uint]bool, error) {
+	const q = `SELECT management_category_id FROM asset_management_categories`
+	rows, err := s.db.QueryContext(ctx, q)
+	if err != nil {
+		return map[uint]bool{}, err
+	}
+	defer rows.Close()
+
+	m := make(map[uint]bool)
+	for rows.Next() {
+		var id uint
+		if err := rows.Scan(&id); err != nil {
+			return map[uint]bool{}, err
+		}
+		m[id] = true
+	}
+	return m, rows.Err()
+}
+
+func (s *Store) LoadGenreIDSet(ctx context.Context) (map[uint]bool, error) {
+	const q = `SELECT genre_id FROM asset_genres`
+	rows, err := s.db.QueryContext(ctx, q)
+	if err != nil {
+		return map[uint]bool{}, err
+	}
+	defer rows.Close()
+
+	m := make(map[uint]bool)
+	for rows.Next() {
+		var id uint
+		if err := rows.Scan(&id); err != nil {
+			return map[uint]bool{}, err
+		}
+		m[id] = true
+	}
+	return m, rows.Err()
+}
+
+func (s *Store) LoadStatusIDSet(ctx context.Context) (map[uint]bool, error) {
+	const q = `SELECT status_id FROM asset_statuses`
+	rows, err := s.db.QueryContext(ctx, q)
+	if err != nil {
+		return map[uint]bool{}, err
+	}
+	defer rows.Close()
+
+	m := make(map[uint]bool)
+	for rows.Next() {
+		var id uint
+		if err := rows.Scan(&id); err != nil {
+			return map[uint]bool{}, err
+		}
+		m[id] = true
+	}
+	return m, rows.Err()
+}
+
 
 // ===== Helpers =====
 func ptrString(ns sql.NullString) *string {

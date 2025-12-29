@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"encoding/csv"
 
 	"github.com/gin-gonic/gin"
 )
@@ -29,6 +30,7 @@ func RegisterRoutes(r gin.IRoutes, svc *Service) {
 
 	// assest-set
 	r.GET("/assets/pair/:management_number", h.GetAssetSet)
+	r.POST("/assets/import", h.HandleImportAssets)
 
 }
 
@@ -133,7 +135,7 @@ func (h *Handler) ListAssets(c *gin.Context) {
 	if v := c.Query("management_number"); v != "" {
 		q.ManagementNumber = &v
 	}
-	if v:= c.Query("asmi"); v != "" {
+	if v := c.Query("asmi"); v != "" {
 		if n, err := strconv.ParseUint(v, 10, 64); err == nil {
 			q.AssetMasterID = &n
 		}
@@ -213,6 +215,44 @@ func (h *Handler) RegisterAsset(c *gin.Context) {
 func (h *Handler) GetAssetSet(c *gin.Context) {
 	mng := c.Param("management_number")
 	res, err := h.svc.GetAssetSet(c.Request.Context(), mng)
+	if err != nil {
+		c.JSON(toHTTPStatus(err), apiErrFrom(err))
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
+// ===== batch registration =====
+func (h *Handler) HandleImportAssets(c *gin.Context) {
+	// mode: dry_run | commit（デフォルト commit）
+	mode := strings.ToLower(strings.TrimSpace(c.Query("mode")))
+	if mode == "" {
+		mode = "commit"
+	}
+	if mode != "dry_run" && mode != "commit" {
+		c.JSON(http.StatusBadRequest, apiErr(CodeInvalidArgument, "mode must be 'dry_run' or 'commit'"))
+		return
+	}
+
+	fh, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, apiErr(CodeNotFound, "file is required (multipart form field name: file)"))
+		return
+	}
+
+	f, err := fh.Open()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, apiErr(CodeInternal, err.Error()))
+		return
+	}
+	defer f.Close()
+
+	// CSV reader
+	r := csv.NewReader(f)
+	r.FieldsPerRecord = -1
+	r.TrimLeadingSpace = true
+
+	res, err := h.svc.ImportAssetsCSV(c.Request.Context(), r, mode)
 	if err != nil {
 		c.JSON(toHTTPStatus(err), apiErrFrom(err))
 		return

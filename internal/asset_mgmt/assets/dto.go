@@ -87,6 +87,22 @@ type AssetSetResponse struct {
 	Asset  AssetResponse       `json:"asset"`
 }
 
+type ImportAssetsResponse struct {
+	Total   int               `json:"total"`
+	OkCount int               `json:"ok_count"`
+	NgCount int               `json:"ng_count"`
+	Results []ImportRowResult `json:"results"`
+}
+
+type ImportRowResult struct {
+	Row              int     `json:"row"` // 1-based (ヘッダ行を除いたデータ行番号にしたいなら調整)
+	Ok               bool    `json:"ok"`
+	Error            *string `json:"error,omitempty"`
+	MasterID         *uint64 `json:"master_id,omitempty"`
+	AssetID          *uint64 `json:"asset_id,omitempty"`
+	ManagementNumber *string `json:"management_number,omitempty"`
+}
+
 // ===== Listing helpers =====
 
 type Page struct {
