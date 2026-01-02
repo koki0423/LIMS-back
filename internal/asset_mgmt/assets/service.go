@@ -3,14 +3,14 @@ package assets
 import (
 	"context"
 	"database/sql"
+	"encoding/csv"
 	"errors"
 	"fmt"
-	"log"
-	"strings"
-	"strconv"
-	"time"
-	"encoding/csv"
 	"io"
+	"log"
+	"strconv"
+	"strings"
+	"time"
 
 	mysql "github.com/go-sql-driver/mysql"
 	ulid "github.com/oklog/ulid/v2"
@@ -209,7 +209,6 @@ func (s *Service) UpdateAsset(ctx context.Context, id uint64, in UpdateAssetRequ
 	return *out, nil
 }
 
-
 // ===== Asset Set =====
 // 将来的にcreateAssetMasterとCreateAssetを廃止してこっちへ移行．ただしAndroidとフロントエンドの対応が終わり次第移行すること．
 func (s *Service) CreateAssetSet(ctx context.Context, req CreateAssetSetRequest) (AssetSetResponse, error) {
@@ -339,7 +338,6 @@ func (s *Service) ImportAssetsCSV(ctx context.Context, r *csv.Reader, mode strin
 	}
 
 	// 2) 参照IDを事前取得（パフォーマンス＆早期バリデーション）
-	// ※テーブル名が違う場合は store側の実装だけ調整してね
 	validCats, _ := s.store.LoadManagementCategoryIDSet(ctx)
 	validGenres, _ := s.store.LoadGenreIDSet(ctx)
 	validStatus, _ := s.store.LoadStatusIDSet(ctx)
@@ -404,12 +402,16 @@ func (s *Service) ImportAssetsCSV(ctx context.Context, r *csv.Reader, mode strin
 
 		mid := resp.Master.AssetMasterID
 		aid := resp.Asset.AssetID
+		name := resp.Master.Name
+		genreId := resp.Master.GenreID
 		mng := resp.Master.ManagementNumber
 		out.Results = append(out.Results, ImportRowResult{
 			Row:              rowNum,
 			Ok:               true,
 			MasterID:         &mid,
 			AssetID:          &aid,
+			Name:             &name,
+			GenreID:          &genreId,
 			ManagementNumber: &mng,
 		})
 	}

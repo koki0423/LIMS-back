@@ -100,6 +100,8 @@ type ImportRowResult struct {
 	Error            *string `json:"error,omitempty"`
 	MasterID         *uint64 `json:"master_id,omitempty"`
 	AssetID          *uint64 `json:"asset_id,omitempty"`
+	Name			 *string `json:"name,omitempty"`
+	GenreID          *uint   `json:"genre_id,omitempty"`
 	ManagementNumber *string `json:"management_number,omitempty"`
 }
 
