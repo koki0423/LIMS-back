@@ -262,8 +262,8 @@ func PrintLabels(data []PrintRow, p PrintParams) error {
 	}
 
 	// 0.5) テンプレ配置ディレクトリ
-	// ./LIMS-back/internal/asset_mgmt/printLabels にテンプレを置いている前提
-	tplDir := filepath.Join(baseDir, "internal", "asset_mgmt", "printLabels")
+	// ./LIMS-back/internal/asset_mgmt/printLabels/templates にテンプレを置いている前提
+	tplDir := filepath.Join(baseDir, "internal", "asset_mgmt", "printLabels", "templates")
 
 	// 1) SPC10.exe の場所
 	spc10, err := spc10Path()
