@@ -23,6 +23,7 @@ import (
 	"IRIS-backend/internal/asset_mgmt/lends"
 	"IRIS-backend/internal/asset_mgmt/printLabels"
 	"IRIS-backend/internal/attendance"
+	"IRIS-backend/internal/db_mng"
 	"IRIS-backend/internal/platform/db"
 )
 
@@ -85,6 +86,7 @@ func main() {
 	disposals.RegisterRoutes(api, disposals.NewService(conn))
 	attendance.RegisterRoutes(api, attendance.NewService(conn))
 	printLabels.RegisterRoutes(api, printLabels.NewService())
+	dbmng.RegisterRoutes(api, dbmng.NewService(conn))
 
 	sub, err := fs.Sub(embedded, "public")
 	if err != nil {
