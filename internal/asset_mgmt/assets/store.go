@@ -511,16 +511,16 @@ func (s *Store) ListAssets(ctx context.Context, q AssetSearchQuery, p Page) ([]A
 
 func (s *Store) GetAssetSetByMng(ctx context.Context, mng string) (*AssetSetResponse, error) {
 	const q = `
-SELECT
-	m.asset_master_id,
-	m.management_number, m.name, m.management_category_id, m.genre_id, m.manufacturer, m.model, m.created_at,
-	a.asset_id, a.asset_master_id, a.serial, a.quantity, a.purchased_at, a.status_id,
-	a.owner, a.default_location, a.location, a.last_checked_at, a.last_checked_by, a.notes
-FROM assets_master AS m
-JOIN assets AS a
-	ON a.asset_master_id = m.asset_master_id
-WHERE m.management_number = ?;
-`
+		SELECT
+			m.asset_master_id,
+			m.management_number, m.name, m.management_category_id, m.genre_id, m.manufacturer, m.model, m.created_at,
+			a.asset_id, a.asset_master_id, a.serial, a.quantity, a.purchased_at, a.status_id,
+			a.owner, a.default_location, a.location, a.last_checked_at, a.last_checked_by, a.notes
+		FROM assets_master AS m
+		JOIN assets AS a
+			ON a.asset_master_id = m.asset_master_id
+		WHERE m.management_number = ?;
+	`
 
 	row := s.db.QueryRowContext(ctx, q, mng)
 
@@ -725,6 +725,116 @@ func (s *Store) LoadStatusIDSet(ctx context.Context) (map[uint]bool, error) {
 	}
 	return m, rows.Err()
 }
+
+// === search assets by name ===
+func (s *Store) SearchAssetsByName(ctx context.Context, nameQuery string) ([]AssetSetResponse, error) {
+	const q = `
+		SELECT
+			m.asset_master_id,
+			m.management_number, m.name, m.management_category_id, m.genre_id, m.manufacturer, m.model, m.created_at,
+			a.asset_id, a.asset_master_id, a.serial, a.quantity, a.purchased_at, a.status_id,
+			a.owner, a.default_location, a.location, a.last_checked_at, a.last_checked_by, a.notes
+		FROM assets_master AS m
+		JOIN assets AS a
+			ON a.asset_master_id = m.asset_master_id
+		WHERE m.name LIKE ? ESCAPE '\\'
+		ORDER BY m.asset_master_id, a.asset_id;
+	`
+
+	pattern := "%" + escapeLike(nameQuery) + "%"
+
+	rows, err := s.db.QueryContext(ctx, q, pattern)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	results := make([]AssetSetResponse, 0, 16)
+
+	for rows.Next() {
+		// NULLになり得る列
+		var modelNS sql.NullString
+		var serialNS sql.NullString
+		var locationNS sql.NullString
+		var lastCheckedAtNT sql.NullTime
+		var lastCheckedByNS sql.NullString
+		var notesNS sql.NullString
+
+		// ※ purchased_at が NULL になり得るなら sql.NullTime にする
+		var (
+			masterID           uint64
+			managementNumber   string
+			name               string
+			managementCategory uint64
+			genreID            uint64
+			manufacturer       string
+			createdAt          time.Time
+
+			assetID       uint64
+			assetMasterID uint64
+			quantity      uint64
+			purchasedAt   time.Time
+			statusID      uint64
+			owner         string
+			defaultLoc    string
+		)
+
+		err = rows.Scan(
+			&masterID,
+			&managementNumber, &name, &managementCategory, &genreID, &manufacturer, &modelNS, &createdAt,
+			&assetID, &assetMasterID, &serialNS, &quantity, &purchasedAt, &statusID,
+			&owner, &defaultLoc, &locationNS, &lastCheckedAtNT, &lastCheckedByNS, &notesNS,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		r := AssetSetResponse{
+			Master: AssetMasterResponse{
+				AssetMasterID:        masterID,
+				ManagementNumber:     managementNumber,
+				Name:                 name,
+				ManagementCategoryID: uint(managementCategory),
+				GenreID:              uint(genreID),
+				Manufacturer:         manufacturer,
+				Model:                ptrString(modelNS),
+				CreatedAt:            createdAt,
+			},
+			Asset: AssetResponse{
+				AssetID:          assetID,
+				AssetMasterID:    assetMasterID,
+				ManagementNumber: managementNumber,
+				Serial:           ptrString(serialNS),
+				Quantity:         uint(quantity),
+				PurchasedAt:      purchasedAt,
+				StatusID:         uint(statusID),
+				Owner:            owner,
+				DefaultLocation:  defaultLoc,
+				Location:         ptrString(locationNS),
+				LastCheckedAt:    ptrTime(lastCheckedAtNT),
+				LastCheckedBy:    ptrString(lastCheckedByNS),
+				Notes:            ptrString(notesNS),
+			},
+		}
+
+		results = append(results, r)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return results, nil
+}
+
+// LIKE用のエスケープ（ユーザーが % や _ を入力してもワイルドカードにならないように）
+func escapeLike(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "%", "\\%")
+	s = strings.ReplaceAll(s, "_", "\\_")
+	return s
+}
+
 
 
 // ===== Helpers =====

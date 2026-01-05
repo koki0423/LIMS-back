@@ -1,12 +1,12 @@
 package assets
 
 import (
+	"encoding/csv"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
-	"encoding/csv"
 
 	"github.com/gin-gonic/gin"
 )
@@ -31,6 +31,9 @@ func RegisterRoutes(r gin.IRoutes, svc *Service) {
 	// assest-set
 	r.GET("/assets/pair/:management_number", h.GetAssetSet)
 	r.POST("/assets/import", h.HandleImportAssets) //curl -X POST "http://localhost:8443/api/v2/assets/import?mode=commit" -F "file=@./asset.csv"
+
+	// search
+	r.GET("/assets/search", h.SearchAssets)
 }
 
 // ===== masters =====
@@ -252,6 +255,17 @@ func (h *Handler) HandleImportAssets(c *gin.Context) {
 	r.TrimLeadingSpace = true
 
 	res, err := h.svc.ImportAssetsCSV(c.Request.Context(), r, mode)
+	if err != nil {
+		c.JSON(toHTTPStatus(err), apiErrFrom(err))
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
+func (h *Handler) SearchAssets(c *gin.Context) {
+	nameQuery := c.Query("name") // URLパラメータ ?name=xxx を取得
+
+	res,err:=h.svc.SearchAssetsByName(c.Request.Context(),nameQuery)
 	if err != nil {
 		c.JSON(toHTTPStatus(err), apiErrFrom(err))
 		return

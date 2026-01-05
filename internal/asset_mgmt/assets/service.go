@@ -533,6 +533,15 @@ func parseAssetSetFromCSVRow(rec []string, col map[string]int) (CreateAssetSetRe
 	return req, nil
 }
 
+// search assets by name
+func (s *Service) SearchAssetsByName(ctx context.Context, nameQuery string) ([]AssetSetResponse, error){
+	out,err:=s.store.SearchAssetsByName(ctx,nameQuery)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func parseUint(s string) (uint, error) {
 	// 先頭/末尾空白は呼び元でTrim済み
 	if s == "" {
