@@ -24,6 +24,7 @@ import (
 	"IRIS-backend/internal/asset_mgmt/printLabels"
 	"IRIS-backend/internal/attendance"
 	"IRIS-backend/internal/db_mng"
+	"IRIS-backend/internal/platform/auth"
 	"IRIS-backend/internal/platform/db"
 )
 
@@ -87,6 +88,13 @@ func main() {
 	attendance.RegisterRoutes(api, attendance.NewService(conn))
 	printLabels.RegisterRoutes(api, printLabels.NewService())
 	dbmng.RegisterRoutes(api, dbmng.NewService(conn))
+	auth.RegisterRoutes(api, auth.NewService(conn))
+
+	// 管理者用グループ
+	admin := api.Group("/admin")
+	admin.Use(auth.RequireAuth(auth.JWTSecret()))
+	admin.Use(auth.RequireRole("admin"))
+	admin.GET("/auth-ping", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
 
 	sub, err := fs.Sub(embedded, "public")
 	if err != nil {
