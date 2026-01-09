@@ -265,7 +265,7 @@ func (h *Handler) HandleImportAssets(c *gin.Context) {
 func (h *Handler) SearchAssets(c *gin.Context) {
 	nameQuery := c.Query("name") // URLパラメータ ?name=xxx を取得
 
-	res,err:=h.svc.SearchAssetsByName(c.Request.Context(),nameQuery)
+	res, err := h.svc.SearchAssetsByName(c.Request.Context(), nameQuery)
 	if err != nil {
 		c.JSON(toHTTPStatus(err), apiErrFrom(err))
 		return
