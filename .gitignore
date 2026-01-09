@@ -34,4 +34,4 @@ config/tls/*
 *.key
 
 # ---- フロント埋め込みのビルド成果物 ----
-/public/
+/public/*
