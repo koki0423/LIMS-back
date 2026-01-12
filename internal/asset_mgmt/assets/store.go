@@ -298,7 +298,7 @@ func (s *Store) GetAssetByID(ctx context.Context, id uint64) (*AssetResponse, er
 		a.owner, a.default_location, a.location, a.last_checked_at, a.last_checked_by, a.notes
 	FROM assets a
 	JOIN assets_master m ON m.asset_master_id = a.asset_master_id
-	WHERE a.asset_master_id = ?`
+	WHERE a.asset_id = ?`
 	var r AssetResponse
 	var serial, loc, lcb, notes sql.NullString
 	var lct sql.NullTime
@@ -386,8 +386,12 @@ func (s *Store) UpdateAssetByID(ctx context.Context, id uint64, in UpdateAssetRe
 		return nil, err
 	}
 	if aff, _ := res.RowsAffected(); aff == 0 {
-		return nil, sql.ErrNoRows
+		// ほんとに存在しないのか、値が変わってないだけなのか確認する
+		if _, err := s.GetAssetByID(ctx, id); err == sql.ErrNoRows {
+			return nil, sql.ErrNoRows // ガチで存在しない → 404
+		}
 	}
+
 	return s.GetAssetByID(ctx, id)
 }
 
@@ -468,7 +472,7 @@ func (s *Store) ListAssets(ctx context.Context, q AssetSearchQuery, p Page) ([]A
 		var serial, loc, lcb, notes sql.NullString
 		var lct sql.NullTime
 		if err := rows.Scan(
-			&r.AssetID, &r.AssetMasterID, &r.ManagementNumber,&r.Name, &serial, &r.Quantity, &r.PurchasedAt, &r.StatusID,
+			&r.AssetID, &r.AssetMasterID, &r.ManagementNumber, &r.Name, &serial, &r.Quantity, &r.PurchasedAt, &r.StatusID,
 			&r.Owner, &r.DefaultLocation, &loc, &lct, &lcb, &notes,
 		); err != nil {
 			return nil, 0, err
@@ -834,8 +838,6 @@ func escapeLike(s string) string {
 	s = strings.ReplaceAll(s, "_", "\\_")
 	return s
 }
-
-
 
 // ===== Helpers =====
 func ptrString(ns sql.NullString) *string {
