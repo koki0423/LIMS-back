@@ -13,17 +13,19 @@ type Handler struct{ svc *Service }
 func RegisterRoutes(r gin.IRoutes, svc *Service) {
 	h := &Handler{svc: svc}
 
+	/*既存のエンドポイント．後方互換のため残す．フロントエンドとアプリ側が修正し次第削除*/
+	// ここから
 	// 貸出（管理番号単位）
 	r.POST("/assets/:management_number/lends", h.CreateLend) //OK
 
 	// 貸出リソース
-	r.GET("/lends", h.ListLends)          //OK
-	r.GET("/lends/:lend_ulid", h.GetLend) //OK
-	//r.GET("/lends/:management_number", h.ListLendsByManagementNumber) //
+	r.GET("/lends", h.ListLends)                                      //複数レスポンスあり
+	r.GET("/lends/:lend_ulid", h.GetLendByUlid)                       //特定の貸出取得．１件のみ応答
 
 	// 返却
 	r.POST("/lends/:lend_ulid/returns", h.CreateReturn)     //OK
 	r.GET("/lends/:lend_ulid/returns", h.ListReturnsByLend) //要修正
+	// ここまで
 }
 
 // ---------- handlers ----------
@@ -44,9 +46,9 @@ func (h *Handler) CreateLend(c *gin.Context) {
 	c.JSON(http.StatusCreated, res)
 }
 
-func (h *Handler) GetLend(c *gin.Context) {
-	ul := c.Param("lend_ulid")
-	res, err := h.svc.GetLendByULID(c.Request.Context(), ul)
+func (h *Handler) GetLendByUlid(c *gin.Context) {
+	parm := c.Param("lend_ulid")
+	res, err := h.svc.GetLendByULID(c.Request.Context(), parm)
 	if err != nil {
 		c.JSON(ToHTTPStatus(err), errorFromErr(err))
 		return

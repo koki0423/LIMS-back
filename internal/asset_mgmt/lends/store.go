@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 )
@@ -27,8 +28,21 @@ func (s *Store) ResolveMasterID(ctx context.Context, managementNumber string) (u
 	return id, nil
 }
 
+// GetManagementNumber resolves management_number from asset_master_id
+func (s *Store) GetManagementNumber(ctx context.Context, masterID uint64) (string, error) {
+	const q = `SELECT management_number FROM assets_master WHERE asset_master_id=?`
+	var mng string
+	if err := s.db.QueryRowContext(ctx, q, masterID).Scan(&mng); err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil
+		}
+		return "", err
+	}
+	return mng, nil
+}
+
 // lock inventory row (assets) by master id, return asset_id & quantity
-func (s *Store) LockAssetRow(ctx context.Context, tx *sql.Tx, masterID uint64) (assetID uint64, quantity uint, err error) {
+func (s *Store) lockAssetRow(ctx context.Context, tx *sql.Tx, masterID uint64) (assetID uint64, quantity uint, err error) {
 	const q = `SELECT asset_id, quantity FROM assets WHERE asset_master_id = ? LIMIT 1 FOR UPDATE`
 	row := tx.QueryRowContext(ctx, q, masterID)
 	if err = row.Scan(&assetID, &quantity); err != nil {
@@ -40,7 +54,7 @@ func (s *Store) LockAssetRow(ctx context.Context, tx *sql.Tx, masterID uint64) (
 	return assetID, quantity, nil
 }
 
-func (s *Store) UpdateAssetQuantity(ctx context.Context, tx *sql.Tx, assetID uint64, delta int) error {
+func (s *Store) updateAssetQuantity(ctx context.Context, tx *sql.Tx, assetID uint64, delta int) error {
 	const q = `UPDATE assets SET quantity = quantity + ? WHERE asset_id = ?`
 	res, err := tx.ExecContext(ctx, q, delta, assetID)
 	if err != nil {
@@ -53,33 +67,8 @@ func (s *Store) UpdateAssetQuantity(ctx context.Context, tx *sql.Tx, assetID uin
 	return nil
 }
 
-// Lends CRUD / Queries
-
-func (s *Store) InsertLend(ctx context.Context, tx *sql.Tx, m *Lend) (uint64, error) {
-	const q = `
-	INSERT INTO lends
-	(lend_ulid, asset_master_id, management_number, quantity, borrower_id, due_on, lent_by_id, lent_at, note)
-	VALUES
-	(?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)`
-
-	res, err := tx.ExecContext(ctx, q,
-		m.LendULID,
-		m.AssetMasterID,
-		m.ManagementNumber,
-		m.Quantity,
-		m.BorrowerID,
-		m.DueOn,
-		nullStrOrNil(m.LentByID),
-		nullStrOrNil(m.Note),
-	)
-	if err != nil {
-		return 0, err
-	}
-	id, _ := res.LastInsertId()
-	return uint64(id), nil
-}
-
-func (s *Store) UpdateAssetsStatus(ctx context.Context, tx *sql.Tx, masterID uint64, statusID int) error {
+// updateAssetsStatus updates status_id if different
+func (s *Store) updateAssetsStatus(ctx context.Context, tx *sql.Tx, masterID uint64, statusID int) error {
 	const q = `
 		UPDATE assets
 		SET status_id = ?
@@ -97,19 +86,17 @@ func (s *Store) UpdateAssetsStatus(ctx context.Context, tx *sql.Tx, masterID uin
 
 	// 要件に合わせてここは選択
 	if aff == 0 {
-
 		return sql.ErrNoRows // NotFound
-
 	}
 	return nil
 }
 
-func (s *Store) UpdateAssetOnLend(ctx context.Context, tx *sql.Tx, l *Lend, assetId uint64) error {
+func (s *Store) updateAssetOnLend(ctx context.Context, tx *sql.Tx, borrowerID string, assetId uint64) error {
 	const q = `
 		UPDATE assets
 		SET location = ?, last_checked_at = ?
 		WHERE asset_id = ?`
-	res, err := tx.ExecContext(ctx, q, l.BorrowerID, time.Now(), assetId)
+	res, err := tx.ExecContext(ctx, q, borrowerID, time.Now(), assetId)
 	if err != nil {
 		return err
 	}
@@ -118,6 +105,85 @@ func (s *Store) UpdateAssetOnLend(ctx context.Context, tx *sql.Tx, l *Lend, asse
 		return ErrInternal("failed to update assets.location")
 	}
 	return nil
+}
+
+// Lends CRUD / Queries
+
+// ExecCreateLend handles the full transaction flow for creating a lend
+func (s *Store) ExecCreateLend(ctx context.Context, m *Lend) error {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	// Resolve master (Caller might have done this, but for safety in Tx we can do checks here or rely on input)
+	// Here assuming m.AssetMasterID and m.ManagementNumber are set or we resolve if needed.
+	// Logic from Service:
+	// 1. Resolve master (Already done in Service to populate m? No, Service passed ManagementNumber)
+	// Since m already has AssetMasterID set by Service or we need to ensure consistency.
+	// To keep it clean, let's assume Service resolved ID or we resolve it here.
+	// But Service ResolveMasterID logic was outside Tx. Let's follow strict Service logic:
+	// Service logic: Resolve -> Lock -> Check -> Update -> Insert -> UpdateStatus -> UpdateLocation
+
+	// Lock asset row
+	assetID, qty, err := s.lockAssetRow(ctx, tx, m.AssetMasterID)
+	if err != nil {
+		return err
+	}
+
+	// Stock check
+	if int(qty)-int(m.Quantity) < 0 {
+		err = ErrConflict("insufficient stock")
+		return err
+	}
+	// Decrement stock
+	if err = s.updateAssetQuantity(ctx, tx, assetID, -int(m.Quantity)); err != nil {
+		return err
+	}
+
+	// Insert lend
+	const q = `
+	INSERT INTO lends
+	(lend_ulid, asset_master_id, management_number, quantity, borrower_id, due_on, lent_by_id, lent_at, note)
+	VALUES
+	(?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)`
+
+	res, err := tx.ExecContext(ctx, q,
+		m.LendULID,
+		m.AssetMasterID,
+		m.ManagementNumber,
+		m.Quantity,
+		m.BorrowerID,
+		m.DueOn,
+		nullStrOrNil(m.LentByID),
+		nullStrOrNil(m.Note),
+	)
+	if err != nil {
+		return err
+	}
+	id, _ := res.LastInsertId()
+	m.LendID = uint64(id) // Update struct with ID
+
+	// 複数在庫がある場合、１つの管理番号に対して複数の状態が存在することになるのでここでUPDATEかけると
+	// sql: no rows in result setが返ってくるので，更新操作するけどエラーは無視する
+	// updateAssets status
+	statusID := 4 // 貸出中
+	if err := s.updateAssetsStatus(ctx, tx, m.AssetMasterID, statusID); err != nil {
+		log.Printf("failed to update assets.status: %v", err)
+		// return err
+	}
+
+	// update location
+	if err := s.updateAssetOnLend(ctx, tx, m.BorrowerID, assetID); err != nil {
+		log.Printf("failed to update assets.location: %v", err)
+	}
+
+	return tx.Commit()
 }
 
 func (s *Store) GetLendByULID(ctx context.Context, ulid string) (*Lend, error) {
@@ -270,7 +336,51 @@ func (s *Store) ListLends(ctx context.Context, f LendFilter, p Page) ([]lendRow,
 
 // Returns
 
-func (s *Store) InsertReturn(ctx context.Context, tx *sql.Tx, m *Return) (uint64, error) {
+// ExecCreateReturn handles the full transaction flow for creating a return
+func (s *Store) ExecCreateReturn(ctx context.Context, m *Return) error {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	// Get Lend & returned sum to validate
+	// NOTE: In strict separation, we might pass necessary validation data, but here fetching inside Tx is safer for consistency.
+	lendQ := `SELECT lend_id, lend_ulid, asset_master_id, quantity FROM lends WHERE lend_id = ?`
+	var l Lend
+	if err = tx.QueryRowContext(ctx, lendQ, m.LendID).Scan(&l.LendID, &l.LendULID, &l.AssetMasterID, &l.Quantity); err != nil {
+		return err
+	}
+
+	sumQ := `SELECT COALESCE(SUM(quantity),0) FROM returns WHERE lend_id = ?`
+	var sum uint
+	if err = tx.QueryRowContext(ctx, sumQ, m.LendID).Scan(&sum); err != nil {
+		return err
+	}
+
+	outstanding := uint(0)
+	if l.Quantity > sum {
+		outstanding = l.Quantity - sum
+	}
+	if m.Quantity > outstanding {
+		err = ErrConflict("over return")
+		return err
+	}
+
+	// lock asset row and add stock
+	assetID, _, err := s.lockAssetRow(ctx, tx, l.AssetMasterID)
+	if err != nil {
+		return err
+	}
+	if err = s.updateAssetQuantity(ctx, tx, assetID, int(m.Quantity)); err != nil {
+		return err
+	}
+
+	// insert return
 	const q = `
 	INSERT INTO returns
 	(return_ulid, lend_id, quantity, processed_by_id, returned_at, note)
@@ -280,17 +390,34 @@ func (s *Store) InsertReturn(ctx context.Context, tx *sql.Tx, m *Return) (uint64
 		m.ReturnULID, m.LendID, m.Quantity, nullStrOrNil(m.ProcessedByID), nullStrOrNil(m.Note),
 	)
 	if err != nil {
-		return 0, err
+		return err
 	}
 	id, _ := res.LastInsertId()
-	return uint64(id), nil
-}
+	m.ReturnID = uint64(id)
 
-func (s *Store) UpdateLendReturnedStatus(ctx context.Context, tx *sql.Tx, lendULID string) error {
-	const q = `
-		UPDATE lends SET returned = ? WHERE lend_ulid = ?`
-	_, err := tx.ExecContext(ctx, q, true, lendULID)
-	return err
+	// updateAssets status
+	// 複数在庫がある場合、１つの管理番号に対して複数の状態が存在することになるのでここでUPDATEかけると
+	// sql: no rows in result setが返ってくるので，更新操作するけどエラーは無視する
+	statusID := 1 // 利用可能
+	if err = s.updateAssetsStatus(ctx, tx, l.AssetMasterID, statusID); err != nil {
+		log.Printf("failed to update assets.status: %v", err)
+		//return err
+	}
+
+	// update lend returned status
+	const updateLendQ = `UPDATE lends SET returned = ? WHERE lend_ulid = ?`
+	if _, err = tx.ExecContext(ctx, updateLendQ, true, l.LendULID); err != nil {
+		log.Printf("failed to update lends.returned_status: %v", err)
+		//return err
+	}
+
+	// update location
+	// l.BorrowerID = "" // 返却したのでlocationを空にする -> Store側では空文字で更新
+	if err = s.updateAssetOnLend(ctx, tx, "", assetID); err != nil {
+		log.Printf("failed to update assets.location: %v", err)
+	}
+
+	return tx.Commit()
 }
 
 func (s *Store) ListReturnsByLend(ctx context.Context, lendID uint64, p Page) ([]Return, int64, error) {
