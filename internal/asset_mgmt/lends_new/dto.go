@@ -1,19 +1,21 @@
-package lends
+package lends_new
 
 import "time"
 
 // ---- Requests ----
 
 type CreateLendRequest struct {
-	Quantity   uint    `json:"quantity" binding:"required"`    // >0 をサービス層で検証
-	BorrowerID string  `json:"borrower_id" binding:"required"` // 借受者
-	DueOn      *string `json:"due_on,omitempty"`               // "YYYY-MM-DD"
-	LentByID   *string `json:"lent_by_id,omitempty"`
-	Note       *string `json:"note,omitempty"`
+	ManagementNumber string  `json:"management_number" binding:"required"`
+	Quantity         uint    `json:"quantity" binding:"required"`    // >0 をサービス層で検証
+	BorrowerID       string  `json:"borrower_id" binding:"required"` // 借受者
+	DueOn            *string `json:"due_on,omitempty"`               // "YYYY-MM-DD"
+	LentByID         *string `json:"lent_by_id,omitempty"`
+	Note             *string `json:"note,omitempty"`
 }
 
 type CreateReturnRequest struct {
-	Quantity      uint    `json:"quantity" binding:"required"` // >0
+	LendULID      string  `json:"lend_ulid" binding:"required"` // 追加: URLパラメータからBodyへ移動
+	Quantity      uint    `json:"quantity" binding:"required"`  // >0
 	ProcessedByID *string `json:"processed_by_id,omitempty"`
 	Note          *string `json:"note,omitempty"`
 }

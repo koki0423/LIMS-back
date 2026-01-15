@@ -1,4 +1,4 @@
-package lends
+package lends_new
 
 import (
 	"context"
@@ -41,7 +41,7 @@ func (s *Store) GetManagementNumber(ctx context.Context, masterID uint64) (strin
 	return mng, nil
 }
 
-// lock inventory row (assets) by master id, return asset_id & quantity
+// lock inventory row (assets) by master id
 func (s *Store) lockAssetRow(ctx context.Context, tx *sql.Tx, masterID uint64) (assetID uint64, quantity uint, err error) {
 	const q = `SELECT asset_id, quantity FROM assets WHERE asset_master_id = ? LIMIT 1 FOR UPDATE`
 	row := tx.QueryRowContext(ctx, q, masterID)
@@ -74,20 +74,12 @@ func (s *Store) updateAssetsStatus(ctx context.Context, tx *sql.Tx, masterID uin
 		SET status_id = ?
 		WHERE asset_master_id = ?
 		AND status_id <> ?`
-
+	// エラーは返すが、RowsAffected=0は許容する（ステータスが変わらない場合があるため）
 	res, err := tx.ExecContext(ctx, q, statusID, masterID, statusID)
 	if err != nil {
 		return err
 	}
-	aff, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-
-	// 要件に合わせてここは選択
-	if aff == 0 {
-		return sql.ErrNoRows // NotFound
-	}
+	_, _ = res.RowsAffected()
 	return nil
 }
 
@@ -107,7 +99,7 @@ func (s *Store) updateAssetOnLend(ctx context.Context, tx *sql.Tx, borrowerID st
 	return nil
 }
 
-// Lends CRUD / Queries
+// ---- Transactional Methods ----
 
 // ExecCreateLend handles the full transaction flow for creating a lend
 func (s *Store) ExecCreateLend(ctx context.Context, m *Lend) error {
@@ -121,42 +113,33 @@ func (s *Store) ExecCreateLend(ctx context.Context, m *Lend) error {
 		}
 	}()
 
-	// Resolve master (Caller might have done this, but for safety in Tx we can do checks here or rely on input)
-	// Here assuming m.AssetMasterID and m.ManagementNumber are set or we resolve if needed.
-	// Logic from Service:
-	// 1. Resolve master (Already done in Service to populate m? No, Service passed ManagementNumber)
-	// Since m already has AssetMasterID set by Service or we need to ensure consistency.
-	// To keep it clean, let's assume Service resolved ID or we resolve it here.
-	// But Service ResolveMasterID logic was outside Tx. Let's follow strict Service logic:
-	// Service logic: Resolve -> Lock -> Check -> Update -> Insert -> UpdateStatus -> UpdateLocation
-
-	// Lock asset row
+	// 1. Lock asset row
 	assetID, qty, err := s.lockAssetRow(ctx, tx, m.AssetMasterID)
 	if err != nil {
 		return err
 	}
 
-	// Stock check
+	// 2. Stock check
 	if int(qty)-int(m.Quantity) < 0 {
 		err = ErrConflict("insufficient stock")
 		return err
 	}
-	// Decrement stock
+	// 3. Decrement stock
 	if err = s.updateAssetQuantity(ctx, tx, assetID, -int(m.Quantity)); err != nil {
 		return err
 	}
 
-	// Insert lend
+	// 4. Insert lend
 	const q = `
 	INSERT INTO lends
-	(lend_ulid, asset_master_id, management_number, quantity, borrower_id, due_on, lent_by_id, lent_at, note)
+	(lend_ulid, asset_master_id, quantity, borrower_id, due_on, lent_by_id, lent_at, note)
 	VALUES
-	(?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)`
+	(?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)`
 
 	res, err := tx.ExecContext(ctx, q,
 		m.LendULID,
 		m.AssetMasterID,
-		m.ManagementNumber,
+		// m.ManagementNumber,
 		m.Quantity,
 		m.BorrowerID,
 		m.DueOn,
@@ -167,18 +150,14 @@ func (s *Store) ExecCreateLend(ctx context.Context, m *Lend) error {
 		return err
 	}
 	id, _ := res.LastInsertId()
-	m.LendID = uint64(id) // Update struct with ID
+	m.LendID = uint64(id)
 
-	// 複数在庫がある場合、１つの管理番号に対して複数の状態が存在することになるのでここでUPDATEかけると
-	// sql: no rows in result setが返ってくるので，更新操作するけどエラーは無視する
-	// updateAssets status
-	statusID := 4 // 貸出中
-	if err := s.updateAssetsStatus(ctx, tx, m.AssetMasterID, statusID); err != nil {
+	// 5. Update Asset Status (4: 貸出中)
+	if err := s.updateAssetsStatus(ctx, tx, m.AssetMasterID, 4); err != nil {
 		log.Printf("failed to update assets.status: %v", err)
-		// return err
 	}
 
-	// update location
+	// 6. Update location
 	if err := s.updateAssetOnLend(ctx, tx, m.BorrowerID, assetID); err != nil {
 		log.Printf("failed to update assets.location: %v", err)
 	}
@@ -186,14 +165,126 @@ func (s *Store) ExecCreateLend(ctx context.Context, m *Lend) error {
 	return tx.Commit()
 }
 
+// ExecCreateReturn handles the full transaction flow for creating a return
+func (s *Store) ExecCreateReturn(ctx context.Context, m *Return) error {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	// 1. Get Lend details & validation
+	// LendIDはService層でULIDから解決して渡される想定だが、
+	// トランザクション内での整合性のため再取得・ロックも検討余地あり。
+	// ここでは単純なSELECTでLend情報を取得する。
+	lendQ := `SELECT lend_id, lend_ulid, asset_master_id, quantity FROM lends WHERE lend_id = ?`
+	var l Lend
+	if err = tx.QueryRowContext(ctx, lendQ, m.LendID).Scan(&l.LendID, &l.LendULID, &l.AssetMasterID, &l.Quantity); err != nil {
+		return err
+	}
+
+	// 2. Check Over Return
+	sumQ := `SELECT COALESCE(SUM(quantity),0) FROM returns WHERE lend_id = ?`
+	var sum uint
+	if err = tx.QueryRowContext(ctx, sumQ, m.LendID).Scan(&sum); err != nil {
+		return err
+	}
+	outstanding := uint(0)
+	if l.Quantity > sum {
+		outstanding = l.Quantity - sum
+	}
+	if m.Quantity > outstanding {
+		err = ErrConflict("over return")
+		return err
+	}
+
+	// 3. Lock asset row & Add stock
+	assetID, _, err := s.lockAssetRow(ctx, tx, l.AssetMasterID)
+	if err != nil {
+		return err
+	}
+	if err = s.updateAssetQuantity(ctx, tx, assetID, int(m.Quantity)); err != nil {
+		return err
+	}
+
+	// 4. Insert return
+	const q = `
+	INSERT INTO returns
+	(return_ulid, lend_id, quantity, processed_by_id, returned_at, note)
+	VALUES
+	(?, ?, ?, ?, CURRENT_TIMESTAMP, ?)`
+	res, err := tx.ExecContext(ctx, q,
+		m.ReturnULID, m.LendID, m.Quantity, nullStrOrNil(m.ProcessedByID), nullStrOrNil(m.Note),
+	)
+	if err != nil {
+		return err
+	}
+	id, _ := res.LastInsertId()
+	m.ReturnID = uint64(id)
+
+	// 5. Update Asset Status (1: 利用可能)
+	if err = s.updateAssetsStatus(ctx, tx, l.AssetMasterID, 1); err != nil {
+		log.Printf("failed to update assets.status: %v", err)
+	}
+
+	// 6. Update Lend Returned Status (returned=1)
+	// 全部返却されたかどうかの厳密なチェックは要件によるが、
+	// 既存ロジックに倣い、返却アクションがあれば一旦 returned=true (1) にする
+	// ※部分返却の仕様がある場合は注意
+	const updateLendQ = `UPDATE lends SET returned = ? WHERE lend_id = ?`
+	if _, err = tx.ExecContext(ctx, updateLendQ, true, l.LendID); err != nil {
+		log.Printf("failed to update lends.returned_status: %v", err)
+	}
+
+	// 7. Update Location (Clear)
+	if err = s.updateAssetOnLend(ctx, tx, "", assetID); err != nil {
+		log.Printf("failed to update assets.location: %v", err)
+	}
+
+	return tx.Commit()
+}
+
+// ---- Queries ----
+
+// GetActiveLendByManagementNumber: QRスキャン用
+// 返却未済(returned=0)の貸出データを1件取得する
+func (s *Store) GetActiveLendByManagementNumber(ctx context.Context, managementNumber string) (*Lend, error) {
+	const q = `
+	SELECT 
+		l.lend_id, l.lend_ulid, l.asset_master_id, l.quantity, l.borrower_id, 
+		l.due_on, l.lent_by_id, l.lent_at, l.note, l.returned
+	FROM lends l
+	JOIN assets_master m ON m.asset_master_id = l.asset_master_id -- JOIN追加
+	WHERE m.management_number = ?  -- マスタ側のカラムで検索
+	  AND l.returned = 0
+	LIMIT 1`
+
+	var m Lend
+	err := s.db.QueryRowContext(ctx, q, managementNumber).Scan(
+		&m.LendID, &m.LendULID, &m.AssetMasterID, &m.Quantity, &m.BorrowerID,
+		&m.DueOn, &m.LentByID, &m.LentAt, &m.Note, &m.Returned,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, ErrNotFound("active lend not found")
+		}
+		return nil, err
+	}
+	return &m, nil
+}
+
 func (s *Store) GetLendByULID(ctx context.Context, ulid string) (*Lend, error) {
 	const q = `
-	SELECT lend_id, lend_ulid, asset_master_id, quantity, borrower_id, due_on, lent_by_id, lent_at, note
+	SELECT lend_id, lend_ulid, asset_master_id, quantity, borrower_id, due_on, lent_by_id, lent_at, note, returned
 	FROM lends WHERE lend_ulid = ?`
 	var m Lend
 	err := s.db.QueryRowContext(ctx, q, ulid).Scan(
 		&m.LendID, &m.LendULID, &m.AssetMasterID, &m.Quantity, &m.BorrowerID,
-		&m.DueOn, &m.LentByID, &m.LentAt, &m.Note,
+		&m.DueOn, &m.LentByID, &m.LentAt, &m.Note, &m.Returned,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -220,7 +311,6 @@ type lendRow struct {
 }
 
 func (s *Store) ListLends(ctx context.Context, f LendFilter, p Page) ([]lendRow, int64, error) {
-	// Base select with join & aggregated returned sum
 	sb := strings.Builder{}
 	sb.WriteString(`
 	SELECT
@@ -236,7 +326,6 @@ func (s *Store) ListLends(ctx context.Context, f LendFilter, p Page) ([]lendRow,
 `)
 
 	args := []any{}
-	// Filters
 	if f.ManagementNumber != nil {
 		sb.WriteString(` AND m.management_number = ?`)
 		args = append(args, *f.ManagementNumber)
@@ -254,7 +343,6 @@ func (s *Store) ListLends(ctx context.Context, f LendFilter, p Page) ([]lendRow,
 		args = append(args, *f.To)
 	}
 	if f.OnlyOutstanding {
-		// outstanding = l.quantity > returned_sum
 		sb.WriteString(` AND COALESCE(r.sum_qty,0) < l.quantity`)
 	}
 	if f.Returned != nil {
@@ -275,9 +363,7 @@ func (s *Store) ListLends(ctx context.Context, f LendFilter, p Page) ([]lendRow,
 	sb.WriteString(` LIMIT ? OFFSET ?`)
 	args = append(args, p.Limit, p.Offset)
 
-	q := sb.String()
-
-	rows, err := s.db.QueryContext(ctx, q, args...)
+	rows, err := s.db.QueryContext(ctx, sb.String(), args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -299,9 +385,13 @@ func (s *Store) ListLends(ctx context.Context, f LendFilter, p Page) ([]lendRow,
 		return nil, 0, err
 	}
 
-	// total
+	// Total count query
 	cb := strings.Builder{}
 	cb.WriteString(`SELECT COUNT(*) FROM lends l JOIN assets_master m ON m.asset_master_id=l.asset_master_id LEFT JOIN (SELECT lend_id, SUM(quantity) sum_qty FROM returns GROUP BY lend_id) r ON r.lend_id=l.lend_id WHERE 1=1`)
+	// Reuse args from WHERE clause (need to rebuild or separate logic, simplified here)
+	// For production, extracting filter logic is recommended.
+	// 簡易実装のためargsを再利用できる構造を想定するか、フィルタロジックを関数化すべきですが、
+	// ここでは実装を省略せず、同じ条件を追加します。
 	argsCnt := []any{}
 	if f.ManagementNumber != nil {
 		cb.WriteString(` AND m.management_number = ?`)
@@ -334,94 +424,8 @@ func (s *Store) ListLends(ctx context.Context, f LendFilter, p Page) ([]lendRow,
 	return out, total, nil
 }
 
-// Returns
-
-// ExecCreateReturn handles the full transaction flow for creating a return
-func (s *Store) ExecCreateReturn(ctx context.Context, m *Return) error {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{})
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
-
-	// Get Lend & returned sum to validate
-	// NOTE: In strict separation, we might pass necessary validation data, but here fetching inside Tx is safer for consistency.
-	lendQ := `SELECT lend_id, lend_ulid, asset_master_id, quantity FROM lends WHERE lend_id = ?`
-	var l Lend
-	if err = tx.QueryRowContext(ctx, lendQ, m.LendID).Scan(&l.LendID, &l.LendULID, &l.AssetMasterID, &l.Quantity); err != nil {
-		return err
-	}
-
-	sumQ := `SELECT COALESCE(SUM(quantity),0) FROM returns WHERE lend_id = ?`
-	var sum uint
-	if err = tx.QueryRowContext(ctx, sumQ, m.LendID).Scan(&sum); err != nil {
-		return err
-	}
-
-	outstanding := uint(0)
-	if l.Quantity > sum {
-		outstanding = l.Quantity - sum
-	}
-	if m.Quantity > outstanding {
-		err = ErrConflict("over return")
-		return err
-	}
-
-	// lock asset row and add stock
-	assetID, _, err := s.lockAssetRow(ctx, tx, l.AssetMasterID)
-	if err != nil {
-		return err
-	}
-	if err = s.updateAssetQuantity(ctx, tx, assetID, int(m.Quantity)); err != nil {
-		return err
-	}
-
-	// insert return
-	const q = `
-	INSERT INTO returns
-	(return_ulid, lend_id, quantity, processed_by_id, returned_at, note)
-	VALUES
-	(?, ?, ?, ?, CURRENT_TIMESTAMP, ?)`
-	res, err := tx.ExecContext(ctx, q,
-		m.ReturnULID, m.LendID, m.Quantity, nullStrOrNil(m.ProcessedByID), nullStrOrNil(m.Note),
-	)
-	if err != nil {
-		return err
-	}
-	id, _ := res.LastInsertId()
-	m.ReturnID = uint64(id)
-
-	// updateAssets status
-	// 複数在庫がある場合、１つの管理番号に対して複数の状態が存在することになるのでここでUPDATEかけると
-	// sql: no rows in result setが返ってくるので，更新操作するけどエラーは無視する
-	statusID := 1 // 利用可能
-	if err = s.updateAssetsStatus(ctx, tx, l.AssetMasterID, statusID); err != nil {
-		log.Printf("failed to update assets.status: %v", err)
-		//return err
-	}
-
-	// update lend returned status
-	const updateLendQ = `UPDATE lends SET returned = ? WHERE lend_ulid = ?`
-	if _, err = tx.ExecContext(ctx, updateLendQ, true, l.LendULID); err != nil {
-		log.Printf("failed to update lends.returned_status: %v", err)
-		//return err
-	}
-
-	// update location
-	// l.BorrowerID = "" // 返却したのでlocationを空にする -> Store側では空文字で更新
-	if err = s.updateAssetOnLend(ctx, tx, "", assetID); err != nil {
-		log.Printf("failed to update assets.location: %v", err)
-	}
-
-	return tx.Commit()
-}
-
 func (s *Store) ListReturnsByLend(ctx context.Context, lendID uint64, p Page) ([]Return, int64, error) {
-	order := "DESC"
+		order := "DESC"
 	if strings.ToLower(p.Order) == "asc" {
 		order = "ASC"
 	}

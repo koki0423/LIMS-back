@@ -1,4 +1,4 @@
-package lends
+package lends_new
 
 import (
 	"context"
@@ -13,13 +13,12 @@ import (
 )
 
 // -------------- Error model & mapping --------------
-
 type Code string
 
 const (
 	CodeInvalidArgument Code = "INVALID_ARGUMENT"
 	CodeNotFound        Code = "NOT_FOUND"
-	CodeConflict        Code = "CONFLICT" // 在庫不足・返却過多など
+	CodeConflict        Code = "CONFLICT"
 	CodeUnprocessable   Code = "UNPROCESSABLE_ENTITY"
 	CodeInternal        Code = "INTERNAL"
 )
@@ -36,7 +35,6 @@ func ErrConflict(msg string) *APIError { return &APIError{Code: CodeConflict, Me
 func ErrInternal(msg string) *APIError { return &APIError{Code: CodeInternal, Message: msg} }
 
 // -------------- Clock & ID --------------
-
 type Clock interface{ Now() time.Time }
 type realClock struct{}
 
@@ -51,7 +49,6 @@ func (ulidGen) NewULID(t time.Time) string {
 }
 
 // -------------- Service --------------
-
 type Service struct {
 	db    *sql.DB
 	store *Store
@@ -68,44 +65,53 @@ func NewService(db *sql.DB) *Service {
 	}
 }
 
-// POST /assets/:management_number/lends
-func (s *Service) CreateLend(ctx context.Context, managementNumber string, in CreateLendRequest) (LendResponse, error) {
+// POST /lends
+func (s *Service) CreateLend(ctx context.Context, in CreateLendRequest) (LendResponse, error) {
+	// バリデーション
+	if in.ManagementNumber == "" {
+		return LendResponse{}, ErrInvalid("management_number required")
+	}
 	if in.Quantity == 0 {
 		return LendResponse{}, ErrInvalid("quantity must be > 0")
 	}
-	if strings.TrimSpace(in.BorrowerID) == "" {
+	if in.BorrowerID == "" {
 		return LendResponse{}, ErrInvalid("borrower_id required")
+	}
+
+	// マスタID解決 (これがないとDB登録できない)
+	masterID, err := s.store.ResolveMasterID(ctx, in.ManagementNumber)
+	if err != nil {
+		return LendResponse{}, err
 	}
 
 	now := s.clock.Now()
 	luid := s.id.NewULID(now)
 
-	// Resolve master first (needed for struct)
-	masterID, err := s.store.ResolveMasterID(ctx, managementNumber)
-	if err != nil {
-		return LendResponse{}, err
-	}
-
+	// DB保存用モデルの作成
+	// ManagementNumberはDB保存しないのでセットしない
 	l := &Lend{
-		LendULID:         luid,
-		AssetMasterID:    masterID,
-		ManagementNumber: managementNumber,
-		Quantity:         in.Quantity,
-		BorrowerID:       in.BorrowerID,
-		DueOn:            toNullString(in.DueOn),
-		LentByID:         toNullString(in.LentByID),
-		Note:             toNullString(in.Note),
+		LendULID:      luid,
+		AssetMasterID: masterID,
+		Quantity:      in.Quantity,
+		BorrowerID:    in.BorrowerID,
+		DueOn:         toNullString(in.DueOn),
+		LentByID:      toNullString(in.LentByID),
+		Note:          toNullString(in.Note),
+		// Returned: false, // デフォルトでfalse(0)になるので指定不要、または明示してもOK
 	}
 
-	// Delegate transaction and logic to Store
+	// トランザクション実行 (Store層)
 	if err := s.store.ExecCreateLend(ctx, l); err != nil {
 		return LendResponse{}, err
 	}
 
-	resp := LendResponse{
+	// レスポンス作成
+	// ここではリクエストで受け取った ManagementNumber をそのまま返すことで
+	// クライアント側との整合性を保つ
+	return LendResponse{
 		LendULID:            luid,
 		AssetMasterID:       masterID,
-		ManagementNumber:    managementNumber,
+		ManagementNumber:    in.ManagementNumber, // ここ重要！
 		Quantity:            in.Quantity,
 		BorrowerID:          in.BorrowerID,
 		DueOn:               in.DueOn,
@@ -115,18 +121,16 @@ func (s *Service) CreateLend(ctx context.Context, managementNumber string, in Cr
 		OutstandingQuantity: in.Quantity,
 		Note:                in.Note,
 		Returned:            false,
-	}
-
-	return resp, nil
+	}, nil
 }
 
-func (s *Service) GetLendByULID(ctx context.Context, lendULID string) (LendResponse, error) {
-	m, err := s.store.GetLendByULID(ctx, lendULID)
+// GET /assets/:management_number/active-lend (QR Scan)
+func (s *Service) GetActiveLend(ctx context.Context, managementNumber string) (LendResponse, error) {
+	m, err := s.store.GetActiveLendByManagementNumber(ctx, managementNumber)
 	if err != nil {
 		return LendResponse{}, err
 	}
-
-	// sum returns
+	// DTO変換
 	sum, err := s.store.SumReturned(ctx, m.LendID)
 	if err != nil {
 		return LendResponse{}, err
@@ -136,12 +140,42 @@ func (s *Service) GetLendByULID(ctx context.Context, lendULID string) (LendRespo
 		outstanding = m.Quantity - sum
 	}
 
-	// management_number
+	// ActiveLendメソッドではManagementNumberが既知だが、
+	// Storeが返すStructには入っていない場合があるので注意(Scanで入れてない場合)。
+	// StoreのActiveLendの実装を修正してManagementNumberを入れるか、ここで補完するか。
+	// Store実装ではSELECT句に入れていないが、引数で渡しているので補完可能。
+
+	return LendResponse{
+		LendULID:            m.LendULID,
+		AssetMasterID:       m.AssetMasterID,
+		ManagementNumber:    managementNumber,
+		Quantity:            m.Quantity,
+		BorrowerID:          m.BorrowerID,
+		DueOn:               nullToPtr(m.DueOn),
+		LentByID:            nullToPtr(m.LentByID),
+		LentAt:              m.LentAt,
+		ReturnedQuantity:    sum,
+		OutstandingQuantity: outstanding,
+		Note:                nullToPtr(m.Note),
+		Returned:            m.Returned,
+	}, nil
+}
+
+func (s *Service) GetLendByULID(ctx context.Context, lendULID string) (LendResponse, error) {
+	m, err := s.store.GetLendByULID(ctx, lendULID)
+	if err != nil {
+		return LendResponse{}, err
+	}
+	// ... (以下既存同様のDTO変換) ...
 	mng, err := s.store.GetManagementNumber(ctx, m.AssetMasterID)
 	if err != nil {
 		return LendResponse{}, err
 	}
-
+	sum, _ := s.store.SumReturned(ctx, m.LendID)
+	outstanding := uint(0)
+	if m.Quantity > sum {
+		outstanding = m.Quantity - sum
+	}
 	return LendResponse{
 		LendULID:            m.LendULID,
 		AssetMasterID:       m.AssetMasterID,
@@ -158,6 +192,48 @@ func (s *Service) GetLendByULID(ctx context.Context, lendULID string) (LendRespo
 	}, nil
 }
 
+// POST /returns (Body: lend_ulid)
+func (s *Service) CreateReturn(ctx context.Context, in CreateReturnRequest) (ReturnResponse, error) {
+	if in.Quantity == 0 {
+		return ReturnResponse{}, ErrInvalid("quantity must be > 0")
+	}
+	if in.LendULID == "" {
+		return ReturnResponse{}, ErrInvalid("lend_ulid required")
+	}
+
+	now := s.clock.Now()
+	ruid := s.id.NewULID(now)
+
+	// LendID解決
+	l, err := s.store.GetLendByULID(ctx, in.LendULID)
+	if err != nil {
+		return ReturnResponse{}, err
+	}
+
+	r := &Return{
+		ReturnULID:    ruid,
+		LendID:        l.LendID,
+		Quantity:      in.Quantity,
+		ProcessedByID: toNullString(in.ProcessedByID),
+		Note:          toNullString(in.Note),
+	}
+
+	if err := s.store.ExecCreateReturn(ctx, r); err != nil {
+		return ReturnResponse{}, err
+	}
+
+	resp := ReturnResponse{
+		ReturnULID:    ruid,
+		LendULID:      in.LendULID,
+		Quantity:      in.Quantity,
+		ProcessedByID: in.ProcessedByID,
+		ReturnedAt:    now,
+		Note:          in.Note,
+	}
+	return resp, nil
+}
+
+// ListLends, ListReturnsなどは既存実装とほぼ同様のため省略（IFに合わせて調整）
 type ListLendsResult struct {
 	Items      []LendResponse `json:"items"`
 	Total      int64          `json:"total"`
@@ -235,54 +311,12 @@ func (s *Service) ListReturnsByLend(ctx context.Context, lendULID string, p Page
 	return ListReturnsResult{Items: res, Total: total, NextOffset: next}, nil
 }
 
-// POST /lends/:lend_ulid/returns
-func (s *Service) CreateReturn(ctx context.Context, lendULID string, in CreateReturnRequest) (ReturnResponse, error) {
-	if in.Quantity == 0 {
-		return ReturnResponse{}, ErrInvalid("quantity must be > 0")
-	}
-	now := s.clock.Now()
-	ruid := s.id.NewULID(now)
-
-	// Get Lend to resolve ID
-	l, err := s.store.GetLendByULID(ctx, lendULID)
-	if err != nil {
-		return ReturnResponse{}, err
-	}
-
-	r := &Return{
-		ReturnULID:    ruid,
-		LendID:        l.LendID,
-		Quantity:      in.Quantity,
-		ProcessedByID: toNullString(in.ProcessedByID),
-		Note:          toNullString(in.Note),
-	}
-
-	// Delegate transaction and logic to Store
-	if err := s.store.ExecCreateReturn(ctx, r); err != nil {
-		return ReturnResponse{}, err
-	}
-
-	resp := ReturnResponse{
-		ReturnULID:    ruid,
-		LendULID:      lendULID,
-		Quantity:      in.Quantity,
-		ProcessedByID: in.ProcessedByID,
-		ReturnedAt:    now,
-		Note:          in.Note,
-	}
-
-	return resp, nil
-}
-
-// helpers
-
 func toNullString(s *string) (ns sql.NullString) {
 	if s != nil && strings.TrimSpace(*s) != "" {
 		ns.Valid, ns.String = true, *s
 	}
 	return
 }
-
 func nullToPtr(ns sql.NullString) *string {
 	if ns.Valid {
 		v := ns.String
@@ -290,9 +324,6 @@ func nullToPtr(ns sql.NullString) *string {
 	}
 	return nil
 }
-
-// -------------- Error helpers for handler --------------
-
 func ToHTTPStatus(err error) int {
 	var api *APIError
 	if errors.As(err, &api) {
