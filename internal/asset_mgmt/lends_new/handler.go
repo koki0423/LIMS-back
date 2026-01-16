@@ -34,6 +34,7 @@ func RegisterRoutes(r gin.IRoutes, svc *Service) {
 	// 3. 返却リソース (独立)
 	// POST /returns
 	r.POST("/returns", h.CreateReturn)
+	r.GET("/returns/:lend_ulid", h.GetReturnByUlid)
 	// GET /returns (履歴)
 	r.GET("/returns", h.ListReturns)
 }
@@ -132,6 +133,16 @@ func (h *Handler) CreateReturn(c *gin.Context) {
 	}
 	c.Header("Location", "/returns/"+res.ReturnULID)
 	c.JSON(http.StatusCreated, res)
+}
+
+func (h *Handler) GetReturnByUlid(c *gin.Context) {
+	luid := c.Param("return_ulid")
+	res, err := h.svc.GetReturnsByUlid(c.Request.Context(), luid, Page{Limit: 100, Offset: 0, Order: "desc"})
+	if err != nil {
+		c.JSON(ToHTTPStatus(err), errorFromErr(err))
+		return
+	}
+	c.JSON(http.StatusOK, res)
 }
 
 func (h *Handler) ListReturns(c *gin.Context) {
