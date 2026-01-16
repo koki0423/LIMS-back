@@ -188,12 +188,12 @@ func (s *Store) ExecCreateLend(ctx context.Context, m *Lend) error {
 
 func (s *Store) GetLendByULID(ctx context.Context, ulid string) (*Lend, error) {
 	const q = `
-	SELECT lend_id, lend_ulid, asset_master_id, quantity, borrower_id, due_on, lent_by_id, lent_at, note
+	SELECT lend_id, lend_ulid, asset_master_id, quantity, borrower_id, due_on, lent_by_id, lent_at, note, returned
 	FROM lends WHERE lend_ulid = ?`
 	var m Lend
 	err := s.db.QueryRowContext(ctx, q, ulid).Scan(
 		&m.LendID, &m.LendULID, &m.AssetMasterID, &m.Quantity, &m.BorrowerID,
-		&m.DueOn, &m.LentByID, &m.LentAt, &m.Note,
+		&m.DueOn, &m.LentByID, &m.LentAt, &m.Note, &m.Returned,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
