@@ -16,11 +16,11 @@ func RegisterRoutes(r gin.IRoutes, svc *Service) {
 	// 1. 貸出リソース
 	// POST /lends
 	r.POST("/lends", h.CreateLend)
-	
+
 	// 旧バージョンからの移行が終わり次第，コメントアウト解除予定
 	// GET /lends (一覧・検索)
 	// r.GET("/lends", h.ListLends)
-	
+
 	// アプリケーションからの個別貸出取得用エンドポイント
 	// 旧バージョンからの移行が終わり次第，コメントアウト解除予定
 	// GET /lends/:lend_ulid (ID指定詳細)
@@ -135,10 +135,19 @@ func (h *Handler) CreateReturn(c *gin.Context) {
 }
 
 func (h *Handler) ListReturns(c *gin.Context) {
-	// QueryParam "lend_ulid" などでフィルタ可能にする実装
-	// ... (省略) ...
+	luid := c.Param("lend_ulid")
+	p := Page{
+		Limit:  parseIntDefault(c.Query("limit"), 50),
+		Offset: parseIntDefault(c.Query("offset"), 0),
+		Order:  c.DefaultQuery("order", "desc"),
+	}
+	res, err := h.svc.ListReturnsByLend(c.Request.Context(), luid, p)
+	if err != nil {
+		c.JSON(ToHTTPStatus(err), errorFromErr(err))
+		return
+	}
+	c.JSON(http.StatusOK, res)
 }
-
 
 // ---------- helpers ----------
 
