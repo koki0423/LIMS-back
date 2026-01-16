@@ -22,7 +22,7 @@ func RegisterRoutes(r gin.IRoutes, svc *Service) {
 	r.GET("/lends", h.ListLends)
 	// 返却登録
 	r.POST("/returns", h.CreateReturn)
-	r.POST("/returns/ulid/:lend_key", h.CreateReturnByLendKey)
+	r.POST("/returns/key/:lend_key", h.CreateReturnByLendKey)
 	// 返却単一取得
 	r.GET("/returns/:return_id", h.GetReturn)
 	// 返却履歴リスト
@@ -67,7 +67,7 @@ func (h *LendHandler) CreateReturn(c *gin.Context) {
 	c.JSON(http.StatusCreated, resp)
 }
 
-// POST /api/v2/returns/ulid/:lend_key
+// POST /api/v2/returns/key/:lend_key
 func (h *LendHandler) CreateReturnByLendKey(c *gin.Context) {
 	lendKey := c.Param("lend_key")
 	if lendKey == "" {
