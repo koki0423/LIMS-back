@@ -4,51 +4,42 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
-	"errors"
-	"fmt"
-	"strings"
+	"strconv"
 	"time"
 
-	ulid "github.com/oklog/ulid/v2"
+	"github.com/oklog/ulid/v2"
 )
 
-// -------------- Error model & mapping --------------
-type Code string
+// ===== インターフェース群 =====
 
-const (
-	CodeInvalidArgument Code = "INVALID_ARGUMENT"
-	CodeNotFound        Code = "NOT_FOUND"
-	CodeConflict        Code = "CONFLICT"
-	CodeUnprocessable   Code = "UNPROCESSABLE_ENTITY"
-	CodeInternal        Code = "INTERNAL"
-)
-
-type APIError struct {
-	Code    Code
-	Message string
+type Clock interface {
+	Now() time.Time
 }
 
-func (e *APIError) Error() string      { return fmt.Sprintf("%s: %s", e.Code, e.Message) }
-func ErrInvalid(msg string) *APIError  { return &APIError{Code: CodeInvalidArgument, Message: msg} }
-func ErrNotFound(msg string) *APIError { return &APIError{Code: CodeNotFound, Message: msg} }
-func ErrConflict(msg string) *APIError { return &APIError{Code: CodeConflict, Message: msg} }
-func ErrInternal(msg string) *APIError { return &APIError{Code: CodeInternal, Message: msg} }
-
-// -------------- Clock & ID --------------
-type Clock interface{ Now() time.Time }
 type realClock struct{}
 
-func (realClock) Now() time.Time { return time.Now().UTC() }
-
-type IDGen interface{ NewULID(t time.Time) string }
-type ulidGen struct{}
-
-func (ulidGen) NewULID(t time.Time) string {
-	entropy := ulid.Monotonic(rand.Reader, 0)
-	return ulid.MustNew(ulid.Timestamp(t), entropy).String()
+func (realClock) Now() time.Time {
+	return time.Now()
 }
 
-// -------------- Service --------------
+type IDGen interface {
+	New() (string, error)
+}
+
+type ulidGen struct{}
+
+func (ulidGen) New() (string, error) {
+	t := time.Now().UTC()
+	entropy := ulid.Monotonic(rand.Reader, 0)
+	id, err := ulid.New(ulid.Timestamp(t), entropy)
+	if err != nil {
+		return "", err
+	}
+	return id.String(), nil
+}
+
+// ===== Service本体 =====
+
 type Service struct {
 	db    *sql.DB
 	store *Store
@@ -65,283 +56,358 @@ func NewService(db *sql.DB) *Service {
 	}
 }
 
-// POST /lends
-func (s *Service) CreateLend(ctx context.Context, in CreateLendRequest) (LendResponse, error) {
-	// バリデーション
-	if in.ManagementNumber == "" {
-		return LendResponse{}, ErrInvalid("management_number required")
+// 貸出登録
+func (s *Service) CreateLend(ctx context.Context, req CreateLendRequest) (*LendResponse, error) {
+	if req.Quantity <= 0 {
+		return nil, NewInvalidArgumentError("quantity must be > 0")
 	}
-	if in.Quantity == 0 {
-		return LendResponse{}, ErrInvalid("quantity must be > 0")
-	}
-	if in.BorrowerID == "" {
-		return LendResponse{}, ErrInvalid("borrower_id required")
+	if req.BorrowerID == "" {
+		return nil, NewInvalidArgumentError("borrower_id is required")
 	}
 
-	// マスタID解決 (これがないとDB登録できない)
-	masterID, err := s.store.ResolveMasterID(ctx, in.ManagementNumber)
+	// どちらの経路でも良い:
+	// 1) asset_master_id が指定されている
+	// 2) management_number から引き当てる
+	var assetMasterID int64
+
+	if req.AssetMasterID > 0 {
+		assetMasterID = req.AssetMasterID
+	} else {
+		if req.ManagementNumber == nil || *req.ManagementNumber == "" {
+			return nil, NewInvalidArgumentError("either asset_master_id or management_number is required")
+		}
+
+		id, err := s.store.ResolveMasterID(ctx, *req.ManagementNumber)
+		if err != nil {
+			return nil, err
+		}
+		assetMasterID = id
+	}
+
+	idStr, err := s.id.New()
 	if err != nil {
-		return LendResponse{}, err
+		return nil, err
 	}
 
 	now := s.clock.Now()
-	luid := s.id.NewULID(now)
 
-	// DB保存用モデルの作成
-	// ManagementNumberはDB保存しないのでセットしない
-	l := &Lend{
-		LendULID:      luid,
-		AssetMasterID: masterID,
-		Quantity:      in.Quantity,
-		BorrowerID:    in.BorrowerID,
-		DueOn:         toNullString(in.DueOn),
-		LentByID:      toNullString(in.LentByID),
-		Note:          toNullString(in.Note),
-		// Returned: false, // デフォルトでfalse(0)になるので指定不要、または明示してもOK
+	var dueOnTime time.Time
+	var dueOnValid bool
+	if req.DueOn != nil && *req.DueOn != "" {
+		parsed, err := time.Parse("2006-01-02", *req.DueOn)
+		if err != nil {
+			return nil, NewInvalidArgumentError("invalid due_on format, expected YYYY-MM-DD")
+		}
+		dueOnTime = parsed
+		dueOnValid = true
 	}
 
-	// トランザクション実行 (Store層)
-	if err := s.store.ExecCreateLend(ctx, l); err != nil {
-		return LendResponse{}, err
+	lend := &Lend{
+		LendULID:      idStr,
+		AssetMasterID: assetMasterID,
+		Quantity:      req.Quantity,
+		BorrowerID:    req.BorrowerID,
+		LentAt:        now,
+		Returned:      false,
 	}
 
-	// レスポンス作成
-	// ここではリクエストで受け取った ManagementNumber をそのまま返すことで
-	// クライアント側との整合性を保つ
-	return LendResponse{
-		LendULID:            luid,
-		AssetMasterID:       masterID,
-		ManagementNumber:    in.ManagementNumber, // ここ重要！
-		Quantity:            in.Quantity,
-		BorrowerID:          in.BorrowerID,
-		DueOn:               in.DueOn,
-		LentByID:            in.LentByID,
-		LentAt:              now,
-		ReturnedQuantity:    0,
-		OutstandingQuantity: in.Quantity,
-		Note:                in.Note,
-		Returned:            false,
-	}, nil
+	// management_number カラムは後方互換用なので、来ていたらそのまま保存
+	if req.ManagementNumber != nil && *req.ManagementNumber != "" {
+		lend.ManagementNumber.String = *req.ManagementNumber
+		lend.ManagementNumber.Valid = true
+	}
+
+	if dueOnValid {
+		lend.DueOn.Time = dueOnTime
+		lend.DueOn.Valid = true
+	}
+	if req.LentByID != nil && *req.LentByID != "" {
+		lend.LentByID.String = *req.LentByID
+		lend.LentByID.Valid = true
+	}
+	if req.Note != nil && *req.Note != "" {
+		lend.Note.String = *req.Note
+		lend.Note.Valid = true
+	}
+
+	err = s.store.InsertLend(ctx, lend)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := buildLendResponse(lend, 0)
+	return &resp, nil
 }
 
-// GET /assets/:management_number/active-lend (QR Scan)
-func (s *Service) GetActiveLend(ctx context.Context, managementNumber string) (LendResponse, error) {
-	m, err := s.store.GetActiveLendByManagementNumber(ctx, managementNumber)
-	if err != nil {
-		return LendResponse{}, err
+// 返却登録（部分返却対応）
+func (s *Service) CreateReturn(ctx context.Context, req CreateReturnRequest) (*ReturnResponse, error) {
+	if req.Quantity <= 0 {
+		return nil, NewInvalidArgumentError("quantity must be > 0")
 	}
-	// DTO変換
-	sum, err := s.store.SumReturned(ctx, m.LendID)
-	if err != nil {
-		return LendResponse{}, err
-	}
-	outstanding := uint(0)
-	if m.Quantity > sum {
-		outstanding = m.Quantity - sum
+	if req.LendID <= 0 {
+		return nil, NewInvalidArgumentError("lend_id must be > 0")
 	}
 
-	// ActiveLendメソッドではManagementNumberが既知だが、
-	// Storeが返すStructには入っていない場合があるので注意(Scanで入れてない場合)。
-	// StoreのActiveLendの実装を修正してManagementNumberを入れるか、ここで補完するか。
-	// Store実装ではSELECT句に入れていないが、引数で渡しているので補完可能。
-
-	return LendResponse{
-		LendULID:            m.LendULID,
-		AssetMasterID:       m.AssetMasterID,
-		ManagementNumber:    managementNumber,
-		Quantity:            m.Quantity,
-		BorrowerID:          m.BorrowerID,
-		DueOn:               nullToPtr(m.DueOn),
-		LentByID:            nullToPtr(m.LentByID),
-		LentAt:              m.LentAt,
-		ReturnedQuantity:    sum,
-		OutstandingQuantity: outstanding,
-		Note:                nullToPtr(m.Note),
-		Returned:            m.Returned,
-	}, nil
-}
-
-func (s *Service) GetLendByULID(ctx context.Context, lendULID string) (LendResponse, error) {
-	m, err := s.store.GetLendByULID(ctx, lendULID)
+	idStr, err := s.id.New()
 	if err != nil {
-		return LendResponse{}, err
+		return nil, err
 	}
-	// ... (以下既存同様のDTO変換) ...
-	mng, err := s.store.GetManagementNumber(ctx, m.AssetMasterID)
-	if err != nil {
-		return LendResponse{}, err
-	}
-	sum, _ := s.store.SumReturned(ctx, m.LendID)
-	outstanding := uint(0)
-	if m.Quantity > sum {
-		outstanding = m.Quantity - sum
-	}
-	return LendResponse{
-		LendULID:            m.LendULID,
-		AssetMasterID:       m.AssetMasterID,
-		ManagementNumber:    mng,
-		Quantity:            m.Quantity,
-		BorrowerID:          m.BorrowerID,
-		DueOn:               nullToPtr(m.DueOn),
-		LentByID:            nullToPtr(m.LentByID),
-		LentAt:              m.LentAt,
-		ReturnedQuantity:    sum,
-		OutstandingQuantity: outstanding,
-		Note:                nullToPtr(m.Note),
-		Returned:            m.Returned,
-	}, nil
-}
 
-// POST /returns (Body: lend_ulid)
-func (s *Service) CreateReturn(ctx context.Context, in CreateReturnRequest) (ReturnResponse, error) {
-	if in.Quantity == 0 {
-		return ReturnResponse{}, ErrInvalid("quantity must be > 0")
+	tx, err := s.store.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
 	}
-	if in.LendULID == "" {
-		return ReturnResponse{}, ErrInvalid("lend_ulid required")
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	lend, err := GetLendByIDTx(ctx, tx, req.LendID)
+	if err != nil {
+		return nil, err
+	}
+
+	totalReturned, err := GetTotalReturnedQuantityTx(ctx, tx, req.LendID)
+	if err != nil {
+		return nil, err
+	}
+
+	newTotal := totalReturned + req.Quantity
+	if newTotal > lend.Quantity {
+		return nil, NewQuantityOverReturnError()
 	}
 
 	now := s.clock.Now()
-	ruid := s.id.NewULID(now)
+	ret := &Return{
+		ReturnULID: idStr,
+		LendID:     req.LendID,
+		Quantity:   req.Quantity,
+		ReturnedAt: now,
+	}
 
-	// LendID解決
-	l, err := s.store.GetLendByULID(ctx, in.LendULID)
+	if req.ProcessedByID != nil && *req.ProcessedByID != "" {
+		ret.ProcessedByID.String = *req.ProcessedByID
+		ret.ProcessedByID.Valid = true
+	}
+	if req.Note != nil && *req.Note != "" {
+		ret.Note.String = *req.Note
+		ret.Note.Valid = true
+	}
+
+	err = InsertReturnTx(ctx, tx, ret)
 	if err != nil {
-		return ReturnResponse{}, err
+		return nil, err
 	}
 
-	r := &Return{
-		ReturnULID:    ruid,
-		LendID:        l.LendID,
-		Quantity:      in.Quantity,
-		ProcessedByID: toNullString(in.ProcessedByID),
-		Note:          toNullString(in.Note),
+	if newTotal == lend.Quantity && !lend.Returned {
+		err = UpdateLendReturnedFlagTx(ctx, tx, lend.LendID, true)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	if err := s.store.ExecCreateReturn(ctx, r); err != nil {
-		return ReturnResponse{}, err
+	err = tx.Commit()
+	if err != nil {
+		return nil, err
 	}
 
 	resp := ReturnResponse{
-		ReturnULID:    ruid,
-		LendULID:      in.LendULID,
-		Quantity:      in.Quantity,
-		ProcessedByID: in.ProcessedByID,
-		ReturnedAt:    now,
-		Note:          in.Note,
+		ReturnID:   ret.ReturnID,
+		ReturnULID: ret.ReturnULID,
+		LendID:     ret.LendID,
+		Quantity:   ret.Quantity,
 	}
-	return resp, nil
+
+	if ret.ProcessedByID.Valid {
+		val := ret.ProcessedByID.String
+		resp.ProcessedByID = &val
+	}
+	resp.ReturnedAt = ret.ReturnedAt
+	if ret.Note.Valid {
+		val := ret.Note.String
+		resp.Note = &val
+	}
+
+	return &resp, nil
 }
 
-func (s *Service) GetReturnsByUlid(ctx context.Context, uld string) (Return, error) {
-res,err:=s.store.GetReturnsByUlid(ctx,uld)
-}
-
-type ListLendsResult struct {
-	Items      []LendResponse `json:"items"`
-	Total      int64          `json:"total"`
-	NextOffset int            `json:"next_offset"`
-}
-
-func (s *Service) ListLends(ctx context.Context, f LendFilter, p Page) (ListLendsResult, error) {
-	rows, total, err := s.store.ListLends(ctx, f, p)
+// 貸出単一取得
+func (s *Service) GetLend(ctx context.Context, lendID int64) (*LendResponse, error) {
+	lend, err := s.store.GetLendByID(ctx, lendID)
 	if err != nil {
-		return ListLendsResult{}, err
+		return nil, err
+	}
+	totalReturned, err := s.store.GetTotalReturnedQuantity(ctx, lendID)
+	if err != nil {
+		return nil, err
+	}
+	resp := buildLendResponse(lend, totalReturned)
+	return &resp, nil
+}
+
+// 貸出単一取得（ID or ULID）
+func (s *Service) GetLendByKey(ctx context.Context, key string) (*LendResponse, error) {
+	if key == "" {
+		return nil, NewInvalidArgumentError("id or ulid is required")
 	}
 
-	items := make([]LendResponse, 0, len(rows))
-	for _, r := range rows {
-		outstanding := uint(0)
-		if r.Lend.Quantity > r.ReturnedSum {
-			outstanding = r.Lend.Quantity - r.ReturnedSum
+	// 数値として解釈できればID検索
+	if id, err := strconv.ParseInt(key, 10, 64); err == nil && id > 0 {
+		return s.GetLend(ctx, id)
+	}
+
+	// それ以外は lend_ulid とみなして検索
+	lend, err := s.store.GetLendByULID(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	totalReturned, err := s.store.GetTotalReturnedQuantity(ctx, lend.LendID)
+	if err != nil {
+		return nil, err
+	}
+	resp := buildLendResponse(lend, totalReturned)
+	return &resp, nil
+}
+
+// 貸出一覧
+func (s *Service) ListLends(ctx context.Context, filter LendFilter) ([]LendResponse, error) {
+	lends, err := s.store.ListLends(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+
+	var result []LendResponse
+	for _, lend := range lends {
+		totalReturned, err := s.store.GetTotalReturnedQuantity(ctx, lend.LendID)
+		if err != nil {
+			return nil, err
 		}
-		items = append(items, LendResponse{
-			LendULID:            r.Lend.LendULID,
-			AssetMasterID:       r.Lend.AssetMasterID,
-			ManagementNumber:    r.ManagementNumber,
-			Quantity:            r.Lend.Quantity,
-			BorrowerID:          r.Lend.BorrowerID,
-			DueOn:               nullToPtr(r.Lend.DueOn),
-			LentByID:            nullToPtr(r.Lend.LentByID),
-			LentAt:              r.Lend.LentAt,
-			ReturnedQuantity:    r.ReturnedSum,
-			OutstandingQuantity: outstanding,
-			Note:                nullToPtr(r.Lend.Note),
-			Returned:            r.Lend.Returned,
-		})
+		resp := buildLendResponse(lend, totalReturned)
+		result = append(result, resp)
 	}
-
-	next := p.Offset + p.Limit
-	if next >= int(total) {
-		next = 0
-	} // 0=終端
-	return ListLendsResult{Items: items, Total: total, NextOffset: next}, nil
+	return result, nil
 }
 
-type ListReturnsResult struct {
-	Items      []ReturnResponse `json:"items"`
-	Total      int64            `json:"total"`
-	NextOffset int              `json:"next_offset"`
-}
-
-func (s *Service) ListReturnsByLend(ctx context.Context, lendULID string, p Page) (ListReturnsResult, error) {
-	// resolve lend_id
-	l, err := s.store.GetLendByULID(ctx, lendULID)
+// 返却単一取得
+func (s *Service) GetReturn(ctx context.Context, returnID int64) (*ReturnResponse, error) {
+	ret, err := s.store.GetReturnByID(ctx, returnID)
 	if err != nil {
-		return ListReturnsResult{}, err
+		return nil, err
 	}
 
-	items, total, err := s.store.ListReturnsByLend(ctx, l.LendID, p)
+	resp := ReturnResponse{
+		ReturnID:   ret.ReturnID,
+		ReturnULID: ret.ReturnULID,
+		LendID:     ret.LendID,
+		Quantity:   ret.Quantity,
+	}
+	if ret.ProcessedByID.Valid {
+		val := ret.ProcessedByID.String
+		resp.ProcessedByID = &val
+	}
+	resp.ReturnedAt = ret.ReturnedAt
+	if ret.Note.Valid {
+		val := ret.Note.String
+		resp.Note = &val
+	}
+	return &resp, nil
+}
+
+// 返却単一取得（ID or ULID）
+func (s *Service) GetReturnByKey(ctx context.Context, key string) (*ReturnResponse, error) {
+	if key == "" {
+		return nil, NewInvalidArgumentError("id or ulid is required")
+	}
+
+	// 数値なら return_id
+	if id, err := strconv.ParseInt(key, 10, 64); err == nil && id > 0 {
+		return s.GetReturn(ctx, id)
+	}
+
+	// それ以外は return_ulid
+	ret, err := s.store.GetReturnByULID(ctx, key)
 	if err != nil {
-		return ListReturnsResult{}, err
+		return nil, err
 	}
 
-	res := make([]ReturnResponse, 0, len(items))
-	for _, it := range items {
-		res = append(res, ReturnResponse{
-			ReturnULID:    it.ReturnULID,
-			LendULID:      lendULID,
-			Quantity:      it.Quantity,
-			ProcessedByID: nullToPtr(it.ProcessedByID),
-			ReturnedAt:    it.ReturnedAt,
-			Note:          nullToPtr(it.Note),
-		})
+	resp := ReturnResponse{
+		ReturnID:   ret.ReturnID,
+		ReturnULID: ret.ReturnULID,
+		LendID:     ret.LendID,
+		Quantity:   ret.Quantity,
 	}
-	next := p.Offset + p.Limit
-	if next >= int(total) {
-		next = 0
+
+	if ret.ProcessedByID.Valid {
+		v := ret.ProcessedByID.String
+		resp.ProcessedByID = &v
 	}
-	return ListReturnsResult{Items: res, Total: total, NextOffset: next}, nil
+	resp.ReturnedAt = ret.ReturnedAt
+	if ret.Note.Valid {
+		v := ret.Note.String
+		resp.Note = &v
+	}
+
+	return &resp, nil
 }
 
-func toNullString(s *string) (ns sql.NullString) {
-	if s != nil && strings.TrimSpace(*s) != "" {
-		ns.Valid, ns.String = true, *s
+// 返却一覧
+func (s *Service) ListReturns(ctx context.Context, filter ReturnFilter) ([]ReturnResponse, error) {
+	returns, err := s.store.ListReturns(ctx, filter)
+	if err != nil {
+		return nil, err
 	}
-	return
-}
-func nullToPtr(ns sql.NullString) *string {
-	if ns.Valid {
-		v := ns.String
-		return &v
-	}
-	return nil
-}
-func ToHTTPStatus(err error) int {
-	var api *APIError
-	if errors.As(err, &api) {
-		switch api.Code {
-		case CodeInvalidArgument:
-			return 400
-		case CodeNotFound:
-			return 404
-		case CodeConflict:
-			return 409
-		case CodeUnprocessable:
-			return 422
-		default:
-			return 500
+
+	var result []ReturnResponse
+	for _, ret := range returns {
+		resp := ReturnResponse{
+			ReturnID:   ret.ReturnID,
+			ReturnULID: ret.ReturnULID,
+			LendID:     ret.LendID,
+			Quantity:   ret.Quantity,
 		}
+		if ret.ProcessedByID.Valid {
+			val := ret.ProcessedByID.String
+			resp.ProcessedByID = &val
+		}
+		resp.ReturnedAt = ret.ReturnedAt
+		if ret.Note.Valid {
+			val := ret.Note.String
+			resp.Note = &val
+		}
+		result = append(result, resp)
 	}
-	return 500
+	return result, nil
+}
+
+// ヘルパー関数
+func buildLendResponse(lend *Lend, returnedQty int) LendResponse {
+	resp := LendResponse{
+		LendID:           lend.LendID,
+		LendULID:         lend.LendULID,
+		AssetMasterID:    lend.AssetMasterID,
+		Quantity:         lend.Quantity,
+		BorrowerID:       lend.BorrowerID,
+		LentAt:           lend.LentAt,
+		Returned:         lend.Returned,
+		ReturnedQuantity: returnedQty,
+	}
+
+	if lend.ManagementNumber.Valid {
+		val := lend.ManagementNumber.String
+		resp.ManagementNumber = &val
+	}
+	if lend.DueOn.Valid {
+		val := lend.DueOn.Time
+		resp.DueOn = &val
+	}
+	if lend.LentByID.Valid {
+		val := lend.LentByID.String
+		resp.LentByID = &val
+	}
+	if lend.Note.Valid {
+		val := lend.Note.String
+		resp.Note = &val
+	}
+	return resp
 }
