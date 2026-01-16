@@ -18,9 +18,9 @@ type CreateLendRequest struct {
 
 // 返却登録リクエスト
 type CreateReturnRequest struct {
-	LendID        int64   `json:"lend_id"`
-	Quantity      int     `json:"quantity"`
-	ProcessedByID *string `json:"processed_by_id,omitempty"`
+	LendID        int64   `json:"lend_id" binding:"required"`
+	Quantity      int     `json:"quantity" binding:"required"`
+	ProcessedByID *string `json:"processed_by_id" binding:"required"`
 	Note          *string `json:"note,omitempty"`
 }
 

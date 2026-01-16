@@ -22,6 +22,7 @@ func RegisterRoutes(r gin.IRoutes, svc *Service) {
 	r.GET("/lends", h.ListLends)
 	// 返却登録
 	r.POST("/returns", h.CreateReturn)
+	r.POST("/returns/ulid/:lend_key", h.CreateReturnByLendKey)
 	// 返却単一取得
 	r.GET("/returns/:return_id", h.GetReturn)
 	// 返却履歴リスト
@@ -63,6 +64,63 @@ func (h *LendHandler) CreateReturn(c *gin.Context) {
 		writeError(c, err)
 		return
 	}
+	c.JSON(http.StatusCreated, resp)
+}
+
+// POST /api/v2/returns/ulid/:lend_key
+func (h *LendHandler) CreateReturnByLendKey(c *gin.Context) {
+	lendKey := c.Param("lend_key")
+	if lendKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    ErrCodeInvalidArgument,
+			"message": "lend_key (id or ulid) is required",
+		})
+		return
+	}
+
+	var body struct {
+		Quantity      int     `json:"quantity"`
+		ProcessedByID *string `json:"processed_by_id,omitempty"`
+		Note          *string `json:"note,omitempty"`
+	}
+
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    ErrCodeInvalidArgument,
+			"message": err.Error(),
+		})
+		return
+	}
+
+	if body.Quantity <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    ErrCodeInvalidArgument,
+			"message": "quantity must be > 0",
+		})
+		return
+	}
+
+	// lend_key から lend を取得（中に lend_id が入っている）
+	lendResp, err := h.svc.GetLendByKey(c.Request.Context(), lendKey)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+
+	// 既存の CreateReturnRequest にマッピング（lend_id だけ埋めればOK）
+	req := CreateReturnRequest{
+		LendID:        lendResp.LendID,
+		Quantity:      body.Quantity,
+		ProcessedByID: body.ProcessedByID,
+		Note:          body.Note,
+	}
+
+	resp, err := h.svc.CreateReturn(c.Request.Context(), req)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+
 	c.JSON(http.StatusCreated, resp)
 }
 
