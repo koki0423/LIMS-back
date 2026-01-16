@@ -233,7 +233,10 @@ func (s *Service) CreateReturn(ctx context.Context, in CreateReturnRequest) (Ret
 	return resp, nil
 }
 
-// ListLends, ListReturnsなどは既存実装とほぼ同様のため省略（IFに合わせて調整）
+func (s *Service) GetReturnsByUlid(ctx context.Context, uld string) (Return, error) {
+res,err:=s.store.GetReturnsByUlid(ctx,uld)
+}
+
 type ListLendsResult struct {
 	Items      []LendResponse `json:"items"`
 	Total      int64          `json:"total"`
