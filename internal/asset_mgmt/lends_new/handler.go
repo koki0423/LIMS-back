@@ -14,21 +14,22 @@ func RegisterRoutes(r gin.IRoutes, svc *Service) {
 	h := &Handler{svc: svc}
 
 	// 1. 貸出リソース
-	// POST /lends (管理番号などはBodyかQueryで渡す設計が必要だが、ここではQueryで例示)
-	// 本来は CreateLendRequest に management_number を含めるべき。
-	// 今回の要件では /assets/:mng/lends ではなく /lends にしたい要望があったため。
-	// ここでは実装の都合上、QueryParameterで management_number を受け取る形にする。
+	// POST /lends
 	r.POST("/lends", h.CreateLend)
 	
+	// 旧バージョンからの移行が終わり次第，コメントアウト解除予定
 	// GET /lends (一覧・検索)
-	r.GET("/lends", h.ListLends)
+	// r.GET("/lends", h.ListLends)
 	
+	// アプリケーションからの個別貸出取得用エンドポイント
+	// 旧バージョンからの移行が終わり次第，コメントアウト解除予定
 	// GET /lends/:lend_ulid (ID指定詳細)
-	r.GET("/lends/:lend_ulid", h.GetLendByUlid)
+	// r.GET("/lends/:lend_ulid", h.GetLendByUlid)
 
 	// 2. 資産・現物起点 (QR Scan)
-	// GET /assets/:management_number/active-lend
-	r.GET("/assets/:management_number/active-lend", h.GetActiveLend)
+	// ターミナル端末（スマホ）からのQRスキャンでの貸出情報取得用エンドポイント
+	// GET /assets/active-lend/:management_number
+	r.GET("/assets/active-lend/:management_number", h.GetActiveLend)
 
 	// 3. 返却リソース (独立)
 	// POST /returns
