@@ -10,7 +10,7 @@ const (
 	DefaultPageLimit   = 50
 	MaxPageLimit       = 200
 	DefaultSort        = SortClockedAtDesc
-	DefaultTZ          = "Asia/Tokyo"
+	DefaultTZ          = "UTC"
 	DateLayout         = "2006-01-02"
 )
 

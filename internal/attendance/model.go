@@ -25,7 +25,7 @@ func (r attendanceRow) toModel() Attendance {
 		AttendanceID:  r.AttendanceID,
 		StudentNumber: r.StudentNumber,
 		AttendedOn:    r.AttendedOn,
-		ClockedAt:     r.ClockedAt,
+		ClockedAt:     r.ClockedAt.UTC(),
 		Note:          r.Note,
 	}
 }

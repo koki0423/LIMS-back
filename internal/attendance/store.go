@@ -27,7 +27,7 @@ func (s *Store) Upsert(ctx context.Context, student string, attendedOn *time.Tim
 	// - 既存更新: RowsAffected = 2
 	var q = `
 	INSERT INTO attendances (student_number, attended_on, clocked_at, note)
-	VALUES (?, COALESCE(?, CURRENT_DATE), CURRENT_TIMESTAMP, ?)
+	VALUES (?, COALESCE(?, UTC_DATE()), UTC_TIMESTAMP(), ?)
 	ON DUPLICATE KEY UPDATE
 	clocked_at = VALUES(clocked_at),
 	note       = VALUES(note)`
@@ -48,7 +48,7 @@ func (s *Store) Upsert(ctx context.Context, student string, attendedOn *time.Tim
 	SELECT attendance_id, student_number, DATE_FORMAT(attended_on, '%Y-%m-%d') as attended_on, clocked_at, note
 	FROM attendances
 	WHERE student_number = ?
-	AND attended_on = COALESCE(?, CURRENT_DATE)`,
+	AND attended_on = COALESCE(?, UTC_DATE())`,
 		student, attOn,
 	)
 	var r attendanceRow
@@ -209,7 +209,7 @@ func noteOrNil(s *string) any {
 func normalizeDateString(v string) string {
 	v = strings.TrimSpace(strings.ToLower(v))
 	if v == "today" {
-		return time.Now().In(tzLoc()).Format(DateLayout)
+		return time.Now().UTC().Format(DateLayout)
 	}
 	// assume YYYY-MM-DD
 	return v
@@ -218,7 +218,7 @@ func normalizeDateString(v string) string {
 func mustDate(s string) string {
 	s = normalizeDateString(s)
 	// 軽い検証（失敗時もそのまま返す→DBで弾かせる）
-	if _, err := time.ParseInLocation(DateLayout, s, tzLoc()); err != nil {
+	if _, err := time.ParseInLocation(DateLayout, s, time.UTC); err != nil {
 		return s
 	}
 	return s
@@ -227,12 +227,14 @@ func mustDate(s string) string {
 var cachedLoc *time.Location
 
 func tzLoc() *time.Location {
+	// All date/time handling in this package is standardized to UTC.
 	if cachedLoc != nil {
 		return cachedLoc
 	}
 	loc, err := time.LoadLocation(DefaultTZ)
 	if err != nil {
-		return time.Local
+		cachedLoc = time.UTC
+		return cachedLoc
 	}
 	cachedLoc = loc
 	return cachedLoc

@@ -115,11 +115,11 @@ func (s *Service) List(ctx context.Context, q ListQuery) ([]AttendanceResponse, 
 
 // GET /attendances/stats
 func (s *Service) Stats(ctx context.Context, req StatsRequest) ([]StatsRow, error) {
-	from, err := time.ParseInLocation(DateLayout, req.From, tzLoc())
+	from, err := time.ParseInLocation(DateLayout, req.From, time.UTC)
 	if err != nil {
 		return nil, ErrInvalid("from must be YYYY-MM-DD")
 	}
-	to, err := time.ParseInLocation(DateLayout, req.To, tzLoc())
+	to, err := time.ParseInLocation(DateLayout, req.To, time.UTC)
 	if err != nil {
 		return nil, ErrInvalid("to must be YYYY-MM-DD")
 	}
@@ -131,5 +131,5 @@ func (s *Service) Stats(ctx context.Context, req StatsRequest) ([]StatsRow, erro
 
 func parseOn(s string) (time.Time, error) {
 	n := normalizeDateString(s)
-	return time.ParseInLocation(DateLayout, n, tzLoc())
+	return time.ParseInLocation(DateLayout, n, time.UTC)
 }

@@ -49,7 +49,7 @@ func LoadConfig(path string) (*Config, error) {
 }
 
 func Connect(c DatabaseConfig) (*sql.DB, error) {
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true&tls=false&timeout=3s&readTimeout=5s&writeTimeout=5s",
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true&tls=false&timeout=3s&readTimeout=5s&writeTimeout=5s&loc=UTC",
 		c.Username, c.Password, c.Host, c.Port, c.DBName)
 
 	db, err := sql.Open(driverName, dsn)
