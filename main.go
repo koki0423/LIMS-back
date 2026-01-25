@@ -21,7 +21,7 @@ import (
 
 	"IRIS-backend/internal/asset_mgmt/assets"
 	"IRIS-backend/internal/asset_mgmt/disposals"
-	"IRIS-backend/internal/asset_mgmt/lends"
+	// "IRIS-backend/internal/asset_mgmt/lends"
 	"IRIS-backend/internal/asset_mgmt/lends_new"
 	"IRIS-backend/internal/asset_mgmt/printLabels"
 	"IRIS-backend/internal/attendance"
@@ -30,8 +30,17 @@ import (
 	"IRIS-backend/internal/platform/db"
 )
 
-// //go:embed public
-var embedded embed.FS
+// 埋め込みファイルシステム
+// 埋め込み配信の時TLS化しないとWebUSBが動かないので注意（localhostでアクセスする場合は問題なし）
+// 出席管理
+//
+//go:embed app1
+var embedded_1 embed.FS
+
+// 備品管理
+//
+//go:embed app2
+var embedded_2 embed.FS
 
 const (
 	addrListen = "0.0.0.0:8443"
@@ -60,10 +69,11 @@ func main() {
 	log.Printf("[INFO] connected to DB: %s", cfg.DB.DBName)
 
 	// 埋め込みファイルシステムを作成
-	fileFS := mustSubFS(embedded, "public")
+	fileFS := mustSubFS(embedded_1, "app1")
+	fileFS2 := mustSubFS(embedded_2, "app2")
 
 	// Gin ルータ生成
-	router := newRouter(cfg.Mode, conn, fileFS)
+	router := newRouter(cfg.Mode, conn, fileFS, fileFS2)
 
 	// HTTP サーバ生成
 	srv := &http.Server{
@@ -96,7 +106,7 @@ func mustSubFS(efs embed.FS, dir string) http.FileSystem {
 	return http.FS(sub)
 }
 
-func newRouter(mode string, conn *sql.DB, fileFS http.FileSystem) *gin.Engine {
+func newRouter(mode string, conn *sql.DB, fileFS http.FileSystem, fileFS2 http.FileSystem) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 
 	r := gin.New()
@@ -114,7 +124,7 @@ func newRouter(mode string, conn *sql.DB, fileFS http.FileSystem) *gin.Engine {
 	registerAPIRoutes(r, conn)
 
 	// SPA 配信（API 以外の全てをフロントに流す）
-	registerSPARoutes(r, fileFS)
+	registerSPARoutes(r, fileFS, fileFS2)
 
 	return r
 }
@@ -138,7 +148,7 @@ func registerAPIRoutes(r *gin.Engine, conn *sql.DB) {
 	api := r.Group("/api/v2")
 
 	assets.RegisterRoutes(api, assets.NewService(conn))
-	lends.RegisterRoutes(api, lends.NewService(conn))
+	// lends.RegisterRoutes(api, lends.NewService(conn))
 	lends_new.RegisterRoutes(api, lends_new.NewService(conn))
 	disposals.RegisterRoutes(api, disposals.NewService(conn))
 	attendance.RegisterRoutes(api, attendance.NewService(conn))
@@ -153,21 +163,42 @@ func registerAPIRoutes(r *gin.Engine, conn *sql.DB) {
 	admin.GET("/auth-ping", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
 }
 
-func registerSPARoutes(r *gin.Engine, fileFS http.FileSystem) {
+func registerSPARoutes(r *gin.Engine, fileFS http.FileSystem, fileFS2 http.FileSystem) {
+	// r.NoRoute(func(c *gin.Context) {
+	// 	// API は対象外
+	// 	if strings.HasPrefix(c.Request.URL.Path, "/api/") {
+	// 		c.Status(http.StatusNotFound)
+	// 		return
+	// 	}
+
+	// 	serveSPA(c, fileFS)
+	// })
+	// 入口（好きに変更してOK）
+	r.GET("/", func(c *gin.Context) { c.Redirect(http.StatusFound, "/app1/") })
+
+	r.GET("/app1/*filepath", func(c *gin.Context) {
+		serveSPA(c, fileFS)
+	})
+	r.GET("/app1", func(c *gin.Context) { c.Redirect(http.StatusMovedPermanently, "/app1/") })
+
+	r.GET("/app2/*filepath", func(c *gin.Context) {
+		serveSPA(c, fileFS2)
+	})
+	r.GET("/app2", func(c *gin.Context) { c.Redirect(http.StatusMovedPermanently, "/app2/") })
+
+	// その他は 404（必要ならここで何か別のハンドリング）
 	r.NoRoute(func(c *gin.Context) {
-		// API は対象外
 		if strings.HasPrefix(c.Request.URL.Path, "/api/") {
 			c.Status(http.StatusNotFound)
 			return
 		}
-
-		serveSPA(c, fileFS)
+		c.Status(http.StatusNotFound)
 	})
 }
 
 // SPA 配信
 func serveSPA(c *gin.Context, fileFS http.FileSystem) {
-	reqPath := strings.TrimPrefix(c.Request.URL.Path, "/")
+	reqPath := strings.TrimPrefix(c.Param("filepath"), "/")
 	if reqPath == "" {
 		reqPath = "index.html"
 	}
@@ -191,6 +222,14 @@ func serveSPA(c *gin.Context, fileFS http.FileSystem) {
 		} else {
 			c.Status(http.StatusInternalServerError)
 		}
+		return
+
+	}
+
+	ext := path.Ext(reqPath)
+	if ext != "" {
+		// .js/.css/.wasm など “静的ファイルっぽい” のに無いなら 404 を返す
+		c.Status(http.StatusNotFound)
 		return
 	}
 
