@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/signal"
 	"path"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -31,41 +30,24 @@ import (
 	"IRIS-backend/internal/platform/db"
 )
 
-// --- フロントエンド配信ソース（埋め込み or ディレクトリ）---
+// 埋め込みファイルシステム
+// 埋め込み配信の時TLS化しないとWebUSBが動かないので注意（localhostでアクセスする場合は問題なし）
+// 出席管理
 //
-// 目的:
-// - go build . : 埋め込み配信（単一バイナリ）
-// - go run .   : 指定ディレクトリ配信（フロントを外部でビルドして差し替えやすく）
+// //go:embed app1
+var embedded_1 embed.FS
+
+// 備品管理
 //
-// 切替:
-// - 環境変数 FRONTEND_MODE があれば最優先（embed | dir）
-// - それ以外は「go run 実行っぽい」なら dir、そうでなければ embed
-//
-// ディレクトリ指定（dir のとき）:
-// - FRONTEND_APP1_DIR（例: ../IRIS-frontend/app1/dist）
-// - FRONTEND_APP2_DIR（例: ../IRIS-frontend/app2/dist）
-//
-// ※ 埋め込み配信のとき TLS 化しないと WebUSB が動かないので注意（localhost は例外）
-//
-//go:embed app1/** app2/**
-var embeddedUI embed.FS
+// // go:embed app2
+var embedded_2 embed.FS
 
 const (
 	addrListen = "0.0.0.0:8443"
 
 	modeDev     = "dev"
 	modeRelease = "release"
-
-	frontendModeEmbed = "embed"
-	frontendModeDir   = "dir"
 )
-
-func init() {
-	// OS/環境によっては .js の MIME が空になるケース対策（念のため）
-	_ = mime.AddExtensionType(".js", "application/javascript")
-	_ = mime.AddExtensionType(".mjs", "application/javascript")
-	_ = mime.AddExtensionType(".wasm", "application/wasm")
-}
 
 func main() {
 	cfg, err := db.LoadConfig("config/config.yaml")
@@ -74,10 +56,10 @@ func main() {
 	}
 
 	if cfg.Mode != modeDev && cfg.Mode != modeRelease {
-		fmt.Println("Usage: set mode=dev|release in config/config.yaml")
+		fmt.Println("Usage: go run main.go [dev|release]")
 		return
 	}
-	log.Printf("[INFO] mode: %s", cfg.Mode)
+	log.Printf("[INFO] mode: %s\n", cfg.Mode)
 
 	conn, err := db.Connect(cfg.DB)
 	if err != nil {
@@ -86,22 +68,9 @@ func main() {
 	defer conn.Close()
 	log.Printf("[INFO] connected to DB: %s", cfg.DB.DBName)
 
-	// --- フロント配信用 FileSystem を決定（embed / dir 切替）---
-	source := resolveFrontendSource()
-
-	var fileFS http.FileSystem
-	var fileFS2 http.FileSystem
-	switch source.Mode {
-	case frontendModeDir:
-		fileFS = mustDirFS(source.App1Dir)
-		fileFS2 = mustDirFS(source.App2Dir)
-		log.Printf("[INFO] frontend: %s (app1=%s, app2=%s)", source.Mode, source.App1Dir, source.App2Dir)
-	default:
-		// embed
-		fileFS = mustSubFS(embeddedUI, "app1")
-		fileFS2 = mustSubFS(embeddedUI, "app2")
-		log.Printf("[INFO] frontend: %s", frontendModeEmbed)
-	}
+	// 埋め込みファイルシステムを作成
+	fileFS := mustSubFS(embedded_1, "app1")
+	fileFS2 := mustSubFS(embedded_2, "app2")
 
 	// Gin ルータ生成
 	router := newRouter(cfg.Mode, conn, fileFS, fileFS2)
@@ -127,63 +96,6 @@ func main() {
 	gracefulShutdown(srv, 10*time.Second)
 }
 
-type frontendSource struct {
-	Mode    string
-	App1Dir string
-	App2Dir string
-}
-
-func resolveFrontendSource() frontendSource {
-	// 明示指定があればそれが最優先
-	if v := strings.ToLower(strings.TrimSpace(os.Getenv("FRONTEND_MODE"))); v != "" {
-		if v == frontendModeDir || v == frontendModeEmbed {
-			app1 := strings.TrimSpace(os.Getenv("FRONTEND_APP1_DIR"))
-			app2 := strings.TrimSpace(os.Getenv("FRONTEND_APP2_DIR"))
-			if app1 == "" {
-				app1 = "app1"
-			}
-			if app2 == "" {
-				app2 = "app2"
-			}
-			return frontendSource{Mode: v, App1Dir: app1, App2Dir: app2}
-		}
-		log.Printf("[WARN] invalid FRONTEND_MODE=%q (use embed|dir). fallback to auto", v)
-	}
-
-	// go run っぽいなら dir、それ以外は embed
-	if looksLikeGoRun() {
-		app1 := strings.TrimSpace(os.Getenv("FRONTEND_APP1_DIR"))
-		app2 := strings.TrimSpace(os.Getenv("FRONTEND_APP2_DIR"))
-		if app1 == "" {
-			app1 = "app1"
-		}
-		if app2 == "" {
-			app2 = "app2"
-		}
-		return frontendSource{Mode: frontendModeDir, App1Dir: app1, App2Dir: app2}
-	}
-
-	return frontendSource{Mode: frontendModeEmbed}
-}
-
-func looksLikeGoRun() bool {
-	exe, err := os.Executable()
-	if err != nil {
-		return false
-	}
-	p := strings.ToLower(exe)
-
-	// go run は一時ディレクトリに go-build... みたいなパスを作ることが多い（Win/Unix どちらも）
-	if strings.Contains(p, "go-build") {
-		return true
-	}
-	// 念のため（環境によっては cache パスになることがある）
-	if strings.Contains(p, string(filepath.Separator)+"go-build") {
-		return true
-	}
-	return false
-}
-
 // --- 初期化系 ---
 
 func mustSubFS(efs embed.FS, dir string) http.FileSystem {
@@ -194,26 +106,8 @@ func mustSubFS(efs embed.FS, dir string) http.FileSystem {
 	return http.FS(sub)
 }
 
-func mustDirFS(dir string) http.FileSystem {
-	// 未指定ならリポジトリ直下の app1/app2 を見る（開発で置きたいならここに dist をコピーしてもOK）
-	if strings.TrimSpace(dir) == "" {
-		// 呼び出し側で app1/app2 を使い分けたいので、ここでは空のまま返さない
-		// 具体的なデフォルトは呼び出し側で渡すことを想定
-		log.Fatalf("[FATAL] frontend dir is empty (set FRONTEND_APP1_DIR / FRONTEND_APP2_DIR)")
-	}
-
-	if _, err := os.Stat(dir); err != nil {
-		log.Fatalf("[FATAL] frontend dir not found: %s (%v)", dir, err)
-	}
-	return http.FS(os.DirFS(dir))
-}
-
 func newRouter(mode string, conn *sql.DB, fileFS http.FileSystem, fileFS2 http.FileSystem) *gin.Engine {
-	if mode == modeDev {
-		gin.SetMode(gin.DebugMode)
-	} else {
-		gin.SetMode(gin.ReleaseMode)
-	}
+	gin.SetMode(gin.ReleaseMode)
 
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())
@@ -270,6 +164,15 @@ func registerAPIRoutes(r *gin.Engine, conn *sql.DB) {
 }
 
 func registerSPARoutes(r *gin.Engine, fileFS http.FileSystem, fileFS2 http.FileSystem) {
+	// r.NoRoute(func(c *gin.Context) {
+	// 	// API は対象外
+	// 	if strings.HasPrefix(c.Request.URL.Path, "/api/") {
+	// 		c.Status(http.StatusNotFound)
+	// 		return
+	// 	}
+
+	// 	serveSPA(c, fileFS)
+	// })
 	// 入口（好きに変更してOK）
 	r.GET("/", func(c *gin.Context) { c.Redirect(http.StatusFound, "/app1/") })
 
@@ -320,6 +223,7 @@ func serveSPA(c *gin.Context, fileFS http.FileSystem) {
 			c.Status(http.StatusInternalServerError)
 		}
 		return
+
 	}
 
 	ext := path.Ext(reqPath)
