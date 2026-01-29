@@ -16,7 +16,7 @@ param(
 
   [int]$FrontendPort = 8080,
 
-  [string]$BackendEntry = "mian.go"
+  [string]$BackendEntry = "main.go"
 )
 
 Set-StrictMode -Version Latest
