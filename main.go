@@ -47,7 +47,7 @@ import (
 //
 // ※ 埋め込み配信のとき TLS 化しないと WebUSB が動かないので注意（localhost は例外）
 //
-//go:embed app1/** app2/**
+// //go:embed app1/** app2/**
 var embeddedUI embed.FS
 
 const (
