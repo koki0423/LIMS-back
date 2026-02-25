@@ -51,7 +51,7 @@ func main() {
 	log.Printf("[INFO] connected to DB: %s", cfg.DB.DBName)
 
 	// Gin ルータ生成（ファイルシステム渡しが不要に）
-	router := newRouter(cfg.Mode, conn, cfg.Yahoo.AppID)
+	router := newRouter(cfg.Mode, conn, cfg)
 
 	// HTTP サーバ生成
 	srv := &http.Server{
@@ -76,7 +76,7 @@ func main() {
 
 // --- 初期化系 ---
 
-func newRouter(mode string, conn *sql.DB, appID string) *gin.Engine {
+func newRouter(mode string, conn *sql.DB, cfg *db.Config) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 
 	r := gin.New()
@@ -91,7 +91,7 @@ func newRouter(mode string, conn *sql.DB, appID string) *gin.Engine {
 	r.GET("/ping", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
 
 	// API ルート登録
-	registerAPIRoutes(r, conn, appID)
+	registerAPIRoutes(r, conn, cfg)
 
 	return r
 }
@@ -111,10 +111,11 @@ func devCORS() gin.HandlerFunc {
 
 // --- ルーティング ---
 
-func registerAPIRoutes(r *gin.Engine, conn *sql.DB, appID string) {
+func registerAPIRoutes(r *gin.Engine, conn *sql.DB, cfg *db.Config) {
 	api := r.Group("/api/v2")
+	janClient:= assets.NewJANClient(cfg.Yahoo.AppID)
 
-	assets.RegisterRoutes(api, assets.NewService(conn, appID))
+	assets.RegisterRoutes(api, assets.NewService(conn, janClient))
 	lends_new.RegisterRoutes(api, lends_new.NewService(conn))
 	disposals.RegisterRoutes(api, disposals.NewService(conn))
 	attendance.RegisterRoutes(api, attendance.NewService(conn))
