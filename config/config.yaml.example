@@ -9,3 +9,6 @@ database:
 certificate:
   cert: "<certificate name>"
   key: "<key file name>"
+yahoo:
+  app_id: "<yahoo api key>"
+  comments: "Issued at https://developer.yahoo.co.jp/webapi/shopping/v3/itemsearch.html"
