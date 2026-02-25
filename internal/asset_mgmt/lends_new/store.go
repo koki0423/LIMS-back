@@ -75,6 +75,16 @@ func (s *Store) InsertLend(ctx context.Context, lend *Lend) error {
 	return nil
 }
 
+func (s *Store) UpdateAssetStatusInLend(ctx context.Context, assetMasterID int64, status int) error {
+	query := `
+	UPDATE assets
+	SET status_id = ?
+	WHERE asset_master_id = ?
+	`
+	_, err := s.db.ExecContext(ctx, query, status, assetMasterID)
+	return err
+}
+
 // 貸出1件取得
 func (s *Store) GetLendByID(ctx context.Context, lendID int64) (*Lend, error) {
 	query := `
@@ -265,6 +275,16 @@ func (s *Store) InsertReturn(ctx context.Context, ret *Return) error {
 	}
 	ret.ReturnID = id
 	return nil
+}
+
+func (s *Store) UpdateAssetStatusInReturn(ctx context.Context, assetMasterID int64, status int) error {
+	query := `
+	UPDATE assets
+	SET status_id = ?
+	WHERE asset_master_id = ?
+	`
+	_, err := s.db.ExecContext(ctx, query, status, assetMasterID)
+	return err
 }
 
 // 返却1件取得

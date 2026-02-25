@@ -130,7 +130,14 @@ func (s *Service) CreateLend(ctx context.Context, req CreateLendRequest) (*LendR
 		lend.Note.Valid = true
 	}
 
+	// 貸出登録実施
 	err = s.store.InsertLend(ctx, lend)
+	if err != nil {
+		return nil, err
+	}
+
+	// 登録後のステータス変更
+	err = s.store.UpdateAssetStatusInLend(ctx, assetMasterID, 4) // 4: 貸出中
 	if err != nil {
 		return nil, err
 	}
@@ -205,6 +212,11 @@ func (s *Service) CreateReturn(ctx context.Context, req CreateReturnRequest) (*R
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	err = s.store.UpdateAssetStatusInReturn(ctx, lend.AssetMasterID, 1) // 1: 正常
+	if err != nil {
+		return nil, err
 	}
 
 	err = tx.Commit()
