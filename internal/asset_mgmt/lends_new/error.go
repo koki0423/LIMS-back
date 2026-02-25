@@ -11,7 +11,7 @@ func (e *DomainError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Code, e.Message)
 }
 
-// 共通エラーコード（必要に応じて追加）
+// エラーコード
 const (
 	ErrCodeNotFound           = "NOT_FOUND"
 	ErrCodeInvalidArgument    = "INVALID_ARGUMENT"
