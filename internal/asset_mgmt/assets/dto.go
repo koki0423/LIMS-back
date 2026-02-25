@@ -105,6 +105,12 @@ type ImportRowResult struct {
 	ManagementNumber *string `json:"management_number,omitempty"`
 }
 
+// JANコード検索レスポンス（必要な項目のみ返す）
+type JANLookupResponse struct {
+	Name         string `json:"name"`
+	Manufacturer string `json:"manufacturer"`
+}
+
 // ===== Listing helpers =====
 
 type Page struct {

@@ -34,6 +34,9 @@ func RegisterRoutes(r gin.IRoutes, svc *Service) {
 
 	// search
 	r.GET("/assets/search", h.SearchAssets)
+
+	// JANコード検索
+	r.GET("/assets/lookup/:jan_code", h.LookupJAN)
 }
 
 // ===== masters =====
@@ -266,6 +269,22 @@ func (h *Handler) SearchAssets(c *gin.Context) {
 	nameQuery := c.Query("name") // URLパラメータ ?name=xxx を取得
 
 	res, err := h.svc.SearchAssetsByName(c.Request.Context(), nameQuery)
+	if err != nil {
+		c.JSON(toHTTPStatus(err), apiErrFrom(err))
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
+// ==== JANコード検索 ====
+func (h *Handler) LookupJAN(c *gin.Context) {
+	jan := c.Param("jan_code")
+	if jan == "" {
+		c.JSON(http.StatusBadRequest, apiErr(CodeInvalidArgument, "jan_code is required"))
+		return
+	}
+
+	res, err := h.svc.LookupJAN(c.Request.Context(), jan)
 	if err != nil {
 		c.JSON(toHTTPStatus(err), apiErrFrom(err))
 		return

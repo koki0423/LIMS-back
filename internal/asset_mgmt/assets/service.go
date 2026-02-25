@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/csv"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -55,11 +57,33 @@ func toHTTPStatus(err error) int {
 }
 
 type Service struct {
-	db    *sql.DB
-	store *Store
+	db         *sql.DB
+	store      *Store
+	yahooAppID string
 }
 
-func NewService(db *sql.DB) *Service { return &Service{db: db, store: NewStore(db)} }
+// Yahoo API内部用(レスポンスの必要な部分だけ抜粋)
+type yahooSearchResponse struct {
+	Hits []struct {
+		Name  string `json:"name"`
+		Brand struct {
+			Name string `json:"name"`
+		} `json:"brand"`
+	} `json:"hits"`
+}
+
+// OpenBDのレスポンス（必要なものだけ）
+type openBDResponse []struct {
+	Summary struct {
+		Title     string `json:"title"`
+		Publisher string `json:"publisher"`
+		Author    string `json:"author"`
+	} `json:"summary"`
+}
+
+func NewService(db *sql.DB, yahooAppID string) *Service {
+	return &Service{db: db, store: NewStore(db), yahooAppID: yahooAppID}
+}
 
 // ===== Master =====
 
@@ -534,12 +558,128 @@ func parseAssetSetFromCSVRow(rec []string, col map[string]int) (CreateAssetSetRe
 }
 
 // search assets by name
-func (s *Service) SearchAssetsByName(ctx context.Context, nameQuery string) ([]AssetSetResponse, error){
-	out,err:=s.store.SearchAssetsByName(ctx,nameQuery)
+func (s *Service) SearchAssetsByName(ctx context.Context, nameQuery string) ([]AssetSetResponse, error) {
+	out, err := s.store.SearchAssetsByName(ctx, nameQuery)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
+}
+
+func (s *Service) LookupJAN(ctx context.Context, janCode string) (JANLookupResponse, error) {
+	// ISBN（書籍）かどうか判定
+	isISBN := (strings.HasPrefix(janCode, "978") || strings.HasPrefix(janCode, "979")) && len(janCode) == 13
+
+	if isISBN {
+		// まずはOpenBDを試す
+		res, err := s.lookupOpenBD(ctx, janCode)
+		if err == nil && res.Name != "" {
+			return res, nil
+		}
+		// OpenBDで見つからなければYahooにフォールバック
+	}
+
+	return s.lookupYahoo(ctx, janCode)
+}
+
+// より抜粋・修正
+func (s *Service) lookupOpenBD(ctx context.Context, isbn string) (JANLookupResponse, error) {
+	url := "https://api.openbd.jp/v1/get?isbn=" + isbn
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return JANLookupResponse{}, err
+	}
+
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return JANLookupResponse{}, err
+	}
+	defer resp.Body.Close()
+
+	var obdRes openBDResponse
+	if err := json.NewDecoder(resp.Body).Decode(&obdRes); err != nil {
+		return JANLookupResponse{}, err
+	}
+
+	// [改善] 他のメソッドと合わせ、ErrNotFound を使うように変更
+	if len(obdRes) == 0 || obdRes[0].Summary.Title == "" {
+		return JANLookupResponse{}, ErrNotFound("item not found in openbd")
+	}
+
+	item := obdRes[0].Summary
+	return JANLookupResponse{
+		Name:         item.Title,
+		Manufacturer: item.Publisher,
+	}, nil
+}
+
+func (s *Service) lookupYahoo(ctx context.Context, janCode string) (JANLookupResponse, error) {
+	if s.yahooAppID == "" {
+		return JANLookupResponse{}, ErrInternal("Yahoo API AppID is not configured")
+	}
+
+	url := fmt.Sprintf("https://shopping.yahooapis.jp/ShoppingWebService/V3/itemSearch?appid=%s&jan_code=%s&results=1", s.yahooAppID, janCode)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return JANLookupResponse{}, err
+	}
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return JANLookupResponse{}, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return JANLookupResponse{}, ErrInternal(fmt.Sprintf("Yahoo API returned status: %d", resp.StatusCode))
+	}
+
+	var yRes yahooSearchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&yRes); err != nil {
+		return JANLookupResponse{}, err
+	}
+
+	if len(yRes.Hits) == 0 {
+		return JANLookupResponse{}, ErrNotFound("item not found by jan_code")
+	}
+
+	hit := yRes.Hits[0]
+	// [修正] クリーンアップ後の名前を生成
+	hitName := cleanItemName(hit.Name)
+	manufacturer := hit.Brand.Name
+
+	// [改善] メーカー名が空の場合、クリーンアップ「後」の名前から先頭を切り出す
+	// 元の hit.Name だと "【翌日発送】ソニー..." のようにノイズが先頭に来る可能性があるため
+	if manufacturer == "" {
+		parts := strings.Split(hitName, " ")
+		if len(parts) > 0 {
+			manufacturer = parts[0]
+		}
+	}
+
+	return JANLookupResponse{
+		Name:         hitName,
+		Manufacturer: manufacturer,
+	}, nil
+}
+
+func cleanItemName(name string) string {
+	replacer := strings.NewReplacer(
+		"【翌日発送】", "",
+		"翌日発送・", "",
+		"送料無料", "",
+		"【新品】", "",
+		"】", " ",
+		"【", "",
+	)
+	name = replacer.Replace(name)
+	// 全角スペースを半角に統一
+	name = strings.ReplaceAll(name, "　", " ")
+	return strings.TrimSpace(name)
 }
 
 func parseUint(s string) (uint, error) {

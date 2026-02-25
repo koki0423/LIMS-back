@@ -29,11 +29,16 @@ type Certs struct {
 	Key  string `yaml:"key"`
 }
 
+type YahooConfig struct {
+	AppID string `yaml:"app_id"`
+}
+
 type Config struct {
 	Version     string         `yaml:"version"`
 	Mode        string         `yaml:"mode"`
 	DB          DatabaseConfig `yaml:"database"`
 	Certificate Certs          `yaml:"certificate"`
+	Yahoo       YahooConfig    `yaml:"yahoo"`
 }
 
 // LoadConfig はYAMLファイルを読み込みますが、ファイルが存在しない場合は環境変数を使用します
@@ -71,6 +76,9 @@ func loadFromEnv() *Config {
 		Certificate: Certs{
 			Cert: getEnv("CERT_FILE", ""),
 			Key:  getEnv("KEY_FILE", ""),
+		},
+		Yahoo: YahooConfig{
+			AppID: getEnv("YAHOO_APP_ID", ""),
 		},
 	}
 }
