@@ -300,7 +300,7 @@ func (s *Service) ImportAssetsCSV(ctx context.Context, r *csv.Reader, mode strin
 		col[k] = i
 	}
 
-	// 必須カラム（あなたのstructに合わせる）
+	// 必須カラム
 	required := []string{
 		"name", "management_category_id", "genre_id", "manufacturer",
 		"purchased_at", "status_id", "owner", "default_location",
