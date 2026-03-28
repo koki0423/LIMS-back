@@ -46,6 +46,15 @@ type RegisterRequest struct {
 	Role     *string `json:"role,omitempty"` // 未指定なら user
 }
 
+/*
+テスト用ユーザー
+{
+    "id":"sys-admin",
+    "password":"4mH36",
+    "role":"admin"
+}
+*/
+
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
