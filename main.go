@@ -99,6 +99,8 @@ func newRouter(mode string, conn *sql.DB, cfg *db.Config) *gin.Engine {
 func devCORS() gin.HandlerFunc {
 	return cors.New(cors.Config{
 		AllowOrigins: []string{
+			"http://localhost",
+			"http://127.0.0.1",
 			"http://localhost:8080",
 			"http://127.0.0.1:8080",
 		},
