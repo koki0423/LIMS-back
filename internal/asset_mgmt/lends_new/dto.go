@@ -24,6 +24,13 @@ type CreateReturnRequest struct {
 	Note          *string `json:"note,omitempty"`
 }
 
+// 返却登録（LendKey指定）リクエスト
+type CreateReturnByKeyRequest struct {
+	Quantity      int     `json:"quantity" binding:"required"`
+	ProcessedByID *string `json:"processed_by_id,omitempty"`
+	Note          *string `json:"note,omitempty"`
+}
+
 // 貸出レスポンス
 type LendResponse struct {
 	LendID           int64      `json:"lend_id"`
@@ -50,4 +57,12 @@ type ReturnResponse struct {
 	ReturnedAt    time.Time `json:"returned_at"`
 	Note          *string   `json:"note,omitempty"`
 	// 返却元の貸出情報を一部返したいならここに追加
+}
+
+// ---- API Specific Responses ----
+
+// ErrorResponse defines the standard error response format.
+type ErrorResponse struct {
+	Code    string `json:"code" example:"INVALID_ARGUMENT"`
+	Message string `json:"message" example:"invalid input"`
 }

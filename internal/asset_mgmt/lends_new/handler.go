@@ -29,7 +29,17 @@ func RegisterRoutes(r gin.IRoutes, svc *Service) {
 	r.GET("/returns", h.ListReturns)
 }
 
-// POST /api/v2/lends
+// @Summary      Create a lend record
+// @Description  Register a new lend for an asset.
+// @Tags         lends
+// @Accept       json
+// @Produce      json
+// @Param        lend body CreateLendRequest true "Lend to create"
+// @Success      201 {object} LendResponse
+// @Failure      400 {object} ErrorResponse "Invalid input"
+// @Failure      409 {object} ErrorResponse "Conflict, e.g., already lent or insufficient stock"
+// @Failure      500 {object} ErrorResponse "Internal server error"
+// @Router       /lends [post]
 func (h *LendHandler) CreateLend(c *gin.Context) {
 	var req CreateLendRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -48,7 +58,18 @@ func (h *LendHandler) CreateLend(c *gin.Context) {
 	c.JSON(http.StatusCreated, resp)
 }
 
-// POST /api/v2/returns
+// @Summary      Create a return record
+// @Description  Register a return for a specific lend record.
+// @Tags         returns
+// @Accept       json
+// @Produce      json
+// @Param        return body CreateReturnRequest true "Return to create"
+// @Success      201 {object} ReturnResponse
+// @Failure      400 {object} ErrorResponse "Invalid input"
+// @Failure      404 {object} ErrorResponse "Lend record not found"
+// @Failure      409 {object} ErrorResponse "Return quantity exceeds lent quantity"
+// @Failure      500 {object} ErrorResponse "Internal server error"
+// @Router       /returns [post]
 func (h *LendHandler) CreateReturn(c *gin.Context) {
 	var req CreateReturnRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -67,7 +88,19 @@ func (h *LendHandler) CreateReturn(c *gin.Context) {
 	c.JSON(http.StatusCreated, resp)
 }
 
-// POST /api/v2/returns/key/:lend_key
+// @Summary      Create a return record by lend key
+// @Description  Register a return using a lend ID or ULID.
+// @Tags         returns
+// @Accept       json
+// @Produce      json
+// @Param        lend_key path string true "Lend ID or ULID"
+// @Param        return body CreateReturnByKeyRequest true "Return details"
+// @Success      201 {object} ReturnResponse
+// @Failure      400 {object} ErrorResponse "Invalid input"
+// @Failure      404 {object} ErrorResponse "Lend record not found"
+// @Failure      409 {object} ErrorResponse "Return quantity exceeds lent quantity"
+// @Failure      500 {object} ErrorResponse "Internal server error"
+// @Router       /returns/key/{lend_key} [post]
 func (h *LendHandler) CreateReturnByLendKey(c *gin.Context) {
 	lendKey := c.Param("lend_key")
 	if lendKey == "" {
@@ -78,13 +111,9 @@ func (h *LendHandler) CreateReturnByLendKey(c *gin.Context) {
 		return
 	}
 
-	var body struct {
-		Quantity      int     `json:"quantity"`
-		ProcessedByID *string `json:"processed_by_id,omitempty"`
-		Note          *string `json:"note,omitempty"`
-	}
+	var req CreateReturnByKeyRequest
 
-	if err := c.ShouldBindJSON(&body); err != nil {
+	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"code":    ErrCodeInvalidArgument,
 			"message": err.Error(),
@@ -92,7 +121,7 @@ func (h *LendHandler) CreateReturnByLendKey(c *gin.Context) {
 		return
 	}
 
-	if body.Quantity <= 0 {
+	if req.Quantity <= 0 {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"code":    ErrCodeInvalidArgument,
 			"message": "quantity must be > 0",
@@ -108,14 +137,14 @@ func (h *LendHandler) CreateReturnByLendKey(c *gin.Context) {
 	}
 
 	// 既存の CreateReturnRequest にマッピング（lend_id だけ埋めればOK）
-	req := CreateReturnRequest{
+	createReq := CreateReturnRequest{
 		LendID:        lendResp.LendID,
-		Quantity:      body.Quantity,
-		ProcessedByID: body.ProcessedByID,
-		Note:          body.Note,
+		Quantity:      req.Quantity,
+		ProcessedByID: req.ProcessedByID,
+		Note:          req.Note,
 	}
 
-	resp, err := h.svc.CreateReturn(c.Request.Context(), req)
+	resp, err := h.svc.CreateReturn(c.Request.Context(), createReq)
 	if err != nil {
 		writeError(c, err)
 		return
@@ -124,7 +153,16 @@ func (h *LendHandler) CreateReturnByLendKey(c *gin.Context) {
 	c.JSON(http.StatusCreated, resp)
 }
 
-// GET /api/v2/lends/:lend_id
+// @Summary      Get a lend record
+// @Description  Get details of a lend record by its ID or ULID.
+// @Tags         lends
+// @Produce      json
+// @Param        lend_id path string true "Lend ID or ULID"
+// @Success      200 {object} LendResponse
+// @Failure      400 {object} ErrorResponse "Invalid input"
+// @Failure      404 {object} ErrorResponse "Lend not found"
+// @Failure      500 {object} ErrorResponse "Internal server error"
+// @Router       /lends/{lend_id} [get]
 func (h *LendHandler) GetLend(c *gin.Context) {
 	key := c.Param("lend_id")
 	if key == "" {
@@ -144,7 +182,19 @@ func (h *LendHandler) GetLend(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
-// GET /api/v2/lends?borrower_id=&asset_master_id=&management_number=&returned=
+// @Summary      List lend records
+// @Description  Get a list of lend records with optional filtering.
+// @Tags         lends
+// @Produce      json
+// @Param        borrower_id query string false "Filter by borrower ID"
+// @Param        asset_master_id query int false "Filter by asset master ID"
+// @Param        management_number query string false "Filter by management number"
+// @Param        returned query bool false "Filter by returned status (true/false)"
+// @Param        limit query int false "Number of items to return" default(50)
+// @Param        offset query int false "Offset for pagination" default(0)
+// @Success      200 {array} LendResponse
+// @Failure      500 {object} ErrorResponse "Internal server error"
+// @Router       /lends [get]
 func (h *LendHandler) ListLends(c *gin.Context) {
 	filter := LendFilter{
 		BorrowerID:       c.Query("borrower_id"),
@@ -191,7 +241,16 @@ func (h *LendHandler) ListLends(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
-// GET /api/v2/returns/:return_id
+// @Summary      Get a return record
+// @Description  Get details of a return record by its ID or ULID.
+// @Tags         returns
+// @Produce      json
+// @Param        return_id path string true "Return ID or ULID"
+// @Success      200 {object} ReturnResponse
+// @Failure      400 {object} ErrorResponse "Invalid input"
+// @Failure      404 {object} ErrorResponse "Return not found"
+// @Failure      500 {object} ErrorResponse "Internal server error"
+// @Router       /returns/{return_id} [get]
 func (h *LendHandler) GetReturn(c *gin.Context) {
 	key := c.Param("return_id")
 	if key == "" {
@@ -211,7 +270,18 @@ func (h *LendHandler) GetReturn(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
-// GET /api/v2/returns?borrower_id=&asset_master_id=&lend_id=
+// @Summary      List return records
+// @Description  Get a list of return records with optional filtering.
+// @Tags         returns
+// @Produce      json
+// @Param        borrower_id query string false "Filter by borrower ID"
+// @Param        asset_master_id query int false "Filter by asset master ID"
+// @Param        lend_id query int false "Filter by lend ID"
+// @Param        limit query int false "Number of items to return" default(50)
+// @Param        offset query int false "Offset for pagination" default(0)
+// @Success      200 {array} ReturnResponse
+// @Failure      500 {object} ErrorResponse "Internal server error"
+// @Router       /returns [get]
 func (h *LendHandler) ListReturns(c *gin.Context) {
 	filter := ReturnFilter{
 		BorrowerID: c.Query("borrower_id"),

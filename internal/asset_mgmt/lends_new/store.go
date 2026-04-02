@@ -119,6 +119,28 @@ func (s *Store) GetAvailableQuantityByMasterID(ctx context.Context, assetMasterI
 	return availableQty, nil
 }
 
+func (s *Store) GetManagementCategoryIDByMasterID(ctx context.Context, assetMasterID int64) (int, error) {
+	query := `
+	SELECT management_category_id
+	FROM assets_master
+	WHERE asset_master_id = ?
+	LIMIT 1
+	`
+
+	row := s.db.QueryRowContext(ctx, query, assetMasterID)
+
+	var managementCategoryID int
+	err := row.Scan(&managementCategoryID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, NewNotFoundError("asset master not found")
+	}
+	if err != nil {
+		return 0, err
+	}
+
+	return managementCategoryID, nil
+}
+
 func (s *Store) UpdateAssetStatusInLend(ctx context.Context, assetMasterID int64, status int) error {
 	query := `
 	UPDATE assets

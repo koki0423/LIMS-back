@@ -50,3 +50,22 @@ type StatsRow struct {
 	StudentNumber string `json:"user_id"`
 	Count         int64  `json:"count"`
 }
+
+// ===== API Specific Responses =====
+
+// ErrorDetail defines the detail of an API error.
+type ErrorDetail struct {
+	Code    string `json:"code" example:"INVALID_ARGUMENT"`
+	Message string `json:"message" example:"invalid input"`
+}
+
+// ErrorResponse defines the standard error response format.
+type ErrorResponse struct {
+	Error ErrorDetail `json:"error"`
+}
+
+// ListAttendanceResponse represents the response for listing attendances.
+type ListAttendanceResponse struct {
+	Items []AttendanceResponse `json:"items"`
+	Total int64                `json:"total" example:"100"`
+}

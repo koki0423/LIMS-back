@@ -81,7 +81,7 @@ func (s *Service) CreateLend(ctx context.Context, req CreateLendRequest) (*LendR
 		assetMasterID = id
 	}
 
-	// ステータス確認(正常，貸出中以外は貸出不可)
+	// 状態ステータス確認(正常，貸出中以外は貸出不可)
 	statusID, err := s.store.GetAssetStatusByMasterID(ctx, assetMasterID)
 	if err != nil {
 		return nil, err
@@ -89,6 +89,12 @@ func (s *Service) CreateLend(ctx context.Context, req CreateLendRequest) (*LendR
 
 	if statusID != 1 && statusID != 4 {
 		return nil, NewConflictError("only assets with status normal or lent can be lent")
+	}
+
+	// 貸出管理カテゴリIDを取得（貸出中のステータス更新に必要）
+	managementCategoryID, err := s.store.GetManagementCategoryIDByMasterID(ctx, assetMasterID)
+	if err != nil {
+		return nil, err
 	}
 
 	// 在庫数を取得して貸出数量と比較
@@ -151,9 +157,11 @@ func (s *Service) CreateLend(ctx context.Context, req CreateLendRequest) (*LendR
 		return nil, err
 	}
 
-	err = s.store.UpdateAssetStatusInLend(ctx, assetMasterID, 4) // 4: 貸出中
-	if err != nil {
-		return nil, err
+	if managementCategoryID == 1 {
+		err = s.store.UpdateAssetStatusInLend(ctx, assetMasterID, 4) // 4: 貸出中
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	resp := buildLendResponse(lend, 0)
@@ -185,6 +193,12 @@ func (s *Service) CreateReturn(ctx context.Context, req CreateReturnRequest) (*R
 	}()
 
 	lend, err := GetLendByIDTx(ctx, tx, req.LendID)
+	if err != nil {
+		return nil, err
+	}
+
+	// 貸出に紐づく資産の管理区分IDを取得（貸出中のステータス更新に必要）
+	managementCategoryID, err := s.store.GetManagementCategoryIDByMasterID(ctx, lend.AssetMasterID)
 	if err != nil {
 		return nil, err
 	}
@@ -228,9 +242,11 @@ func (s *Service) CreateReturn(ctx context.Context, req CreateReturnRequest) (*R
 		}
 	}
 
-	err = s.store.UpdateAssetStatusInReturn(ctx, lend.AssetMasterID, 1) // 1: 正常
-	if err != nil {
-		return nil, err
+	if managementCategoryID == 1 {
+		err = s.store.UpdateAssetStatusInReturn(ctx, lend.AssetMasterID, 1) // 1: 正常
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	err = tx.Commit()

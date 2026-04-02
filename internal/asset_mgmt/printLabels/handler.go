@@ -2,8 +2,8 @@ package printLabels
 
 import (
 	"errors"
-	"net/http"
 	"log"
+	"net/http"
 
 	"github.com/gin-gonic/gin"
 )
@@ -16,6 +16,18 @@ func RegisterRoutes(r gin.IRoutes, svc *Service) {
 	r.POST("/assets/print/batch", h.HandlePrintBatch)
 }
 
+// @Summary      Print a single label
+// @Description  Print a single label using the specified configuration and data.
+// @Tags         print
+// @Accept       json
+// @Produce      json
+// @Param        request body PrintRequest true "Print request details"
+// @Success      201 {object} PrintResponse
+// @Failure      400 {object} ErrorResponse "Invalid input"
+// @Failure      404 {object} ErrorResponse "Template not found"
+// @Failure      409 {object} ErrorResponse "Tape size not matched"
+// @Failure      500 {object} ErrorResponse "Internal server error"
+// @Router       /assets/print [post]
 func (h *Handler) PrintLabels(c *gin.Context) {
 	var req PrintRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -31,7 +43,18 @@ func (h *Handler) PrintLabels(c *gin.Context) {
 	c.JSON(http.StatusCreated, res)
 }
 
-// /print/batch: 複数ラベルの流し込み印刷
+// @Summary      Print multiple labels
+// @Description  Print multiple labels in a batch using the specified configuration and data.
+// @Tags         print
+// @Accept       json
+// @Produce      json
+// @Param        request body BatchPrintRequest true "Batch print request details"
+// @Success      201 {object} PrintResponse
+// @Failure      400 {object} ErrorResponse "Invalid input"
+// @Failure      404 {object} ErrorResponse "Template not found"
+// @Failure      409 {object} ErrorResponse "Tape size not matched"
+// @Failure      500 {object} ErrorResponse "Internal server error"
+// @Router       /assets/print/batch [post]
 func (h *Handler) HandlePrintBatch(c *gin.Context) {
 	var req BatchPrintRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

@@ -14,6 +14,10 @@ import (
 	"github.com/gin-gonic/gin"
 	_ "github.com/go-sql-driver/mysql"
 
+	_ "IRIS-backend/docs"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
+
 	"IRIS-backend/internal/asset_mgmt/assets"
 	"IRIS-backend/internal/asset_mgmt/disposals"
 	"IRIS-backend/internal/asset_mgmt/lends_new"
@@ -22,6 +26,8 @@ import (
 	"IRIS-backend/internal/dbmng"
 	"IRIS-backend/internal/platform/auth"
 	"IRIS-backend/internal/platform/db"
+
+
 )
 
 const (
@@ -31,6 +37,27 @@ const (
 	modeRelease = "release"
 )
 
+// @title           LIMS-back API
+// @version         2.0
+// @description     This is the API server for the LIMS backend.
+// @termsOfService  http://swagger.io/terms/
+//
+// @contact.name   API Support
+// @contact.url    http://www.swagger.io/support
+// @contact.email  support@swagger.io
+//
+// @license.name  Apache 2.0
+// @license.url   http://www.apache.org/licenses/LICENSE-2.0.html
+//
+// @host      localhost:8443
+// @BasePath  /api/v2
+//
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
+//
+// main はアプリケーションのエントリーポイントです。
+// Swagger のドキュメンテーションを生成するために、`swag init` コマンドを実行してください。
 func main() {
 	cfg, err := db.LoadConfig("config/config.yaml")
 	if err != nil {
@@ -88,6 +115,13 @@ func newRouter(mode string, conn *sql.DB, cfg *db.Config) *gin.Engine {
 	}
 
 	// ヘルスチェック
+	// @Summary Ping server
+	// @Description get server health status
+	// @Tags health
+	// @Accept  json
+	// @Produce  plain
+	// @Success 200 {string} string "ok"
+	// @Router /ping [get]
 	r.GET("/ping", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
 
 	// API ルート登録
@@ -115,7 +149,8 @@ func devCORS() gin.HandlerFunc {
 
 func registerAPIRoutes(r *gin.Engine, conn *sql.DB, cfg *db.Config) {
 	api := r.Group("/api/v2")
-	janClient:= assets.NewJANClient(cfg.Yahoo.AppID)
+	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	janClient := assets.NewJANClient(cfg.Yahoo.AppID)
 
 	assets.RegisterRoutes(api, assets.NewService(conn, janClient))
 	lends_new.RegisterRoutes(api, lends_new.NewService(conn))
@@ -129,6 +164,14 @@ func registerAPIRoutes(r *gin.Engine, conn *sql.DB, cfg *db.Config) {
 	admin := api.Group("/admin")
 	admin.Use(auth.RequireAuth(auth.JWTSecret()))
 	admin.Use(auth.RequireRole("admin"))
+	// @Summary Ping server with authentication
+	// @Description get server health status (requires admin role)
+	// @Tags health,admin
+	// @Accept  json
+	// @Produce  plain
+	// @Success 200 {string} string "ok"
+	// @Security BearerAuth
+	// @Router /admin/auth-ping [get]
 	admin.GET("/auth-ping", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
 }
 

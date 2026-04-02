@@ -18,6 +18,17 @@ func RegisterRoutes(r gin.IRoutes, svc *Service) {
 
 }
 
+// @Summary      Create or update attendance
+// @Description  Upserts an attendance record for a student on a specific date.
+// @Tags         attendance
+// @Accept       json
+// @Produce      json
+// @Param        request body CreateAttendanceRequest true "Attendance details"
+// @Success      200 {object} AttendanceResponse "Updated successfully"
+// @Success      201 {object} AttendanceResponse "Created successfully"
+// @Failure      400 {object} ErrorResponse "Invalid input"
+// @Failure      500 {object} ErrorResponse "Internal server error"
+// @Router       /attendances [post]
 func handleCreateAttendance(svc *Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req CreateAttendanceRequest
@@ -39,6 +50,15 @@ func handleCreateAttendance(svc *Service) gin.HandlerFunc {
 	}
 }
 
+// @Summary      Check attendance existence
+// @Description  Checks if an attendance record exists for a specific user and date.
+// @Tags         attendance
+// @Param        user_id query string false "User ID (Student Number)"
+// @Param        on query string false "Date (YYYY-MM-DD or 'today')"
+// @Success      200 "Record exists"
+// @Failure      400 {object} ErrorResponse "Invalid input"
+// @Failure      404 "Record does not exist"
+// @Router       /attendances [head]
 func handleHeadAttendance(svc *Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		user := c.Query("user_id")
@@ -59,6 +79,21 @@ func handleHeadAttendance(svc *Service) gin.HandlerFunc {
 	}
 }
 
+// @Summary      List attendances
+// @Description  Retrieves a paginated list of attendance records.
+// @Tags         attendance
+// @Produce      json
+// @Param        user_id query string false "Filter by User ID"
+// @Param        on query string false "Filter by exact date (YYYY-MM-DD or 'today')"
+// @Param        from query string false "Filter by start date (YYYY-MM-DD)"
+// @Param        to query string false "Filter by end date (YYYY-MM-DD)"
+// @Param        limit query int false "Number of items to return" default(50)
+// @Param        offset query int false "Offset for pagination" default(0)
+// @Param        sort query string false "Sort order" Enums(clocked_at_desc, clocked_at_asc, attended_on_desc, attended_on_asc) default(clocked_at_desc)
+// @Param        tz query string false "Timezone" default(UTC)
+// @Success      200 {object} ListAttendanceResponse
+// @Failure      500 {object} ErrorResponse "Internal server error"
+// @Router       /attendances [get]
 func handleListAttendances(svc *Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		q := ListQuery{
@@ -97,6 +132,17 @@ func handleListAttendances(svc *Service) gin.HandlerFunc {
 	}
 }
 
+// @Summary      Get attendance statistics
+// @Description  Retrieves top attendance counts grouped by users within a specified period.
+// @Tags         attendance
+// @Produce      json
+// @Param        from query string true "Start date (YYYY-MM-DD)"
+// @Param        to query string true "End date (YYYY-MM-DD)"
+// @Param        limit query int false "Number of items to return" default(10)
+// @Success      200 {object} map[string]interface{}
+// @Failure      400 {object} ErrorResponse "Invalid input"
+// @Failure      500 {object} ErrorResponse "Internal server error"
+// @Router       /attendances/stats [get]
 func handleStats(svc *Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		req := StatsRequest{

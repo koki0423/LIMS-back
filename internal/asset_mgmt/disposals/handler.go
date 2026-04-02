@@ -20,6 +20,19 @@ func RegisterRoutes(r gin.IRoutes, svc *Service) {
 	r.GET("/disposals/:disposal_ulid", h.GetDisposal) //OK
 }
 
+// @Summary      Create a disposal record
+// @Description  Creates a disposal record for an asset by its management number and updates the inventory.
+// @Tags         disposals
+// @Accept       json
+// @Produce      json
+// @Param        management_number path string true "Management Number"
+// @Param        disposal body CreateDisposalRequest true "Disposal to create"
+// @Success      201 {object} DisposalResponse
+// @Failure      400 {object} ErrorResponse "Invalid input"
+// @Failure      404 {object} ErrorResponse "Asset not found"
+// @Failure      409 {object} ErrorResponse "Insufficient stock"
+// @Failure      500 {object} ErrorResponse "Internal server error"
+// @Router       /assets/{management_number}/disposals [post]
 func (h *Handler) CreateDisposal(c *gin.Context) {
 	mng := c.Param("management_number")
 	var req CreateDisposalRequest
@@ -40,6 +53,15 @@ func (h *Handler) CreateDisposal(c *gin.Context) {
 	c.JSON(http.StatusCreated, res)
 }
 
+// @Summary      Get a disposal record
+// @Description  Get details of a disposal record by its ULID.
+// @Tags         disposals
+// @Produce      json
+// @Param        disposal_ulid path string true "Disposal ULID"
+// @Success      200 {object} DisposalResponse
+// @Failure      404 {object} ErrorResponse "Disposal not found"
+// @Failure      500 {object} ErrorResponse "Internal server error"
+// @Router       /disposals/{disposal_ulid} [get]
 func (h *Handler) GetDisposal(c *gin.Context) {
 	ul := c.Param("disposal_ulid")
 	res, err := h.svc.GetDisposalByULID(c.Request.Context(), ul)
@@ -50,6 +72,20 @@ func (h *Handler) GetDisposal(c *gin.Context) {
 	c.JSON(http.StatusOK, res)
 }
 
+// @Summary      List disposal records
+// @Description  Get a paginated list of disposal records with optional filtering.
+// @Tags         disposals
+// @Produce      json
+// @Param        management_number query string false "Filter by management number"
+// @Param        processed_by_id   query string false "Filter by processed user ID"
+// @Param        from              query string false "Filter by date from (RFC3339)" Format(dateTime)
+// @Param        to                query string false "Filter by date to (RFC3339)" Format(dateTime)
+// @Param        limit             query int false "Number of items to return" default(50)
+// @Param        offset            query int false "Offset for pagination"
+// @Param        order             query string false "Sort order ('asc' or 'desc')" Enums(asc, desc) default(desc)
+// @Success      200 {object} ListDisposalsResponse
+// @Failure      500 {object} ErrorResponse "Internal server error"
+// @Router       /disposals [get]
 func (h *Handler) ListDisposals(c *gin.Context) {
 	f := DisposalFilter{}
 	if v := c.Query("management_number"); v != "" {

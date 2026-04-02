@@ -16,8 +16,8 @@ const (
 )
 
 type APIError struct {
-	Code    Code
-	Message string
+	Code    Code   `json:"code" example:"INVALID_ARGUMENT"`
+	Message string `json:"message" example:"invalid input"`
 }
 
 func (e *APIError) Error() string      { return fmt.Sprintf("%s: %s", e.Code, e.Message) }

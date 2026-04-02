@@ -16,11 +16,39 @@ func RegisterRoutes(r gin.IRoutes, svc AuthService) {
 	r.PATCH("/accounts/:id", h.ChangeUsername) // “ユーザー名変更” = id変更
 }
 
+// ===== API Responses for Swagger =====
+
+// TokenResponse represents a successful login response with a JWT token.
+type TokenResponse struct {
+	Token   string `json:"token" example:"eyJhbGciOiJIUzI1NiIsInR5c..."`
+	Message string `json:"message" example:"Login successful"`
+}
+
+// MessageResponse represents a generic success message.
+type MessageResponse struct {
+	Message string `json:"message" example:"success"`
+}
+
+// ErrorResponse represents an error response.
+type ErrorResponse struct {
+	Error string `json:"error" example:"error message"`
+}
+
 type LoginRequest struct {
 	ID       string `json:"id" binding:"required"`
 	Password string `json:"password" binding:"required"`
 }
 
+// @Summary      Login user
+// @Description  Authenticates a user and returns a JWT token.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        request body LoginRequest true "Login credentials"
+// @Success      200 {object} TokenResponse "Login successful"
+// @Failure      400 {object} ErrorResponse "Invalid request"
+// @Failure      401 {object} ErrorResponse "IDまたはパスワードが間違っています"
+// @Router       /login [post]
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -55,6 +83,17 @@ type RegisterRequest struct {
 }
 */
 
+// @Summary      Register a new user
+// @Description  Registers a new account.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        request body RegisterRequest true "Registration details"
+// @Success      201 {object} MessageResponse "Registered successfully"
+// @Failure      400 {object} ErrorResponse "Invalid request"
+// @Failure      409 {object} ErrorResponse "ID already exists"
+// @Failure      500 {object} ErrorResponse "register failed"
+// @Router       /register [post]
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -79,6 +118,15 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"message": "registered"})
 }
 
+// @Summary      Delete an account
+// @Description  Deletes an account by its ID.
+// @Tags         auth
+// @Produce      json
+// @Param        id path string true "Account ID"
+// @Success      200 {object} MessageResponse "Deleted successfully"
+// @Failure      404 {object} ErrorResponse "Not found"
+// @Failure      500 {object} ErrorResponse "delete failed"
+// @Router       /accounts/{id} [delete]
 func (h *AuthHandler) DeleteAccount(c *gin.Context) {
 	id := c.Param("id")
 
@@ -98,6 +146,19 @@ type ChangeUsernameRequest struct {
 	NewID string `json:"new_id" binding:"required"`
 }
 
+// @Summary      Change username (ID)
+// @Description  Changes the ID of an existing account.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Current Account ID"
+// @Param        request body ChangeUsernameRequest true "New ID details"
+// @Success      200 {object} MessageResponse "Username changed successfully"
+// @Failure      400 {object} ErrorResponse "Invalid request"
+// @Failure      404 {object} ErrorResponse "Not found"
+// @Failure      409 {object} ErrorResponse "New ID already exists"
+// @Failure      500 {object} ErrorResponse "change id failed"
+// @Router       /accounts/{id} [patch]
 func (h *AuthHandler) ChangeUsername(c *gin.Context) {
 	oldID := c.Param("id")
 

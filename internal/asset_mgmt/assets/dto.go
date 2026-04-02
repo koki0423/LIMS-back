@@ -68,8 +68,8 @@ type AssetMasterResponse struct {
 type AssetResponse struct {
 	AssetID          uint64     `json:"asset_id"`
 	AssetMasterID    uint64     `json:"asset_master_id"`
-	ManagementNumber string     `json:"management_number"`	//なんかで必要になったから入れたんだけど用途忘れた．削除禁止
-	Name             string     `json:"name"`				//フロントエンドで必要になったから追加．責任分離の観点から将来的に消したい
+	ManagementNumber string     `json:"management_number"` //なんかで必要になったから入れたんだけど用途忘れた．削除禁止
+	Name             string     `json:"name"`              //フロントエンドで必要になったから追加．責任分離の観点から将来的に消したい
 	Serial           *string    `json:"serial,omitempty"`
 	Quantity         uint       `json:"quantity"`
 	PurchasedAt      time.Time  `json:"purchased_at"`
@@ -100,7 +100,7 @@ type ImportRowResult struct {
 	Error            *string `json:"error,omitempty"`
 	MasterID         *uint64 `json:"master_id,omitempty"`
 	AssetID          *uint64 `json:"asset_id,omitempty"`
-	Name			 *string `json:"name,omitempty"`
+	Name             *string `json:"name,omitempty"`
 	GenreID          *uint   `json:"genre_id,omitempty"`
 	ManagementNumber *string `json:"management_number,omitempty"`
 }
@@ -109,6 +109,33 @@ type ImportRowResult struct {
 type JANLookupResponse struct {
 	Name         string `json:"name"`
 	Manufacturer string `json:"manufacturer"`
+}
+
+// ===== API Specific Responses =====
+
+// ErrorDetail defines the detail of an API error.
+type ErrorDetail struct {
+	Code    string `json:"code" example:"INVALID_ARGUMENT"`
+	Message string `json:"message" example:"invalid json"`
+}
+
+// ErrorResponse defines the standard error response format.
+type ErrorResponse struct {
+	Error ErrorDetail `json:"error"`
+}
+
+// ListAssetMastersResponse represents the response for listing asset masters.
+type ListAssetMastersResponse struct {
+	Items      []AssetMasterResponse `json:"items"`
+	Total      int64                 `json:"total" example:"100"`
+	NextOffset int                   `json:"next_offset" example:"50"`
+}
+
+// ListAssetsResponse represents the response for listing assets.
+type ListAssetsResponse struct {
+	Items      []AssetResponse `json:"items"`
+	Total      int64           `json:"total" example:"100"`
+	NextOffset int             `json:"next_offset" example:"50"`
 }
 
 // ===== Listing helpers =====

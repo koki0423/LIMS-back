@@ -41,6 +41,17 @@ func RegisterRoutes(r gin.IRoutes, svc *Service) {
 
 // ===== masters =====
 
+// @Summary      Create a new asset master
+// @Description  Creates a new master record for an asset type. The management_number is generated automatically.
+// @Tags         assets-masters
+// @Accept       json
+// @Produce      json
+// @Param        assetMaster body CreateAssetMasterRequest true "Asset Master to create"
+// @Success      201 {object} AssetMasterResponse
+// @Failure      400 {object} ErrorResponse "Invalid input"
+// @Failure      409 {object} ErrorResponse "Conflict, e.g., duplicate management_number on generation"
+// @Failure      500 {object} ErrorResponse "Internal server error"
+// @Router       /assets/masters [post]
 func (h *Handler) CreateAssetMaster(c *gin.Context) {
 	var req CreateAssetMasterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -56,6 +67,15 @@ func (h *Handler) CreateAssetMaster(c *gin.Context) {
 	c.JSON(http.StatusCreated, res)
 }
 
+// @Summary      Get an asset master
+// @Description  Get details of an asset master by its management number.
+// @Tags         assets-masters
+// @Produce      json
+// @Param        management_number path string true "Management Number"
+// @Success      200 {object} AssetMasterResponse
+// @Failure      404 {object} ErrorResponse "Asset master not found"
+// @Failure      500 {object} ErrorResponse "Internal server error"
+// @Router       /assets/masters/{management_number} [get]
 func (h *Handler) GetAssetMaster(c *gin.Context) {
 	mng := c.Param("management_number")
 	res, err := h.svc.GetAssetMaster(c.Request.Context(), mng)
@@ -66,6 +86,17 @@ func (h *Handler) GetAssetMaster(c *gin.Context) {
 	c.JSON(http.StatusOK, res)
 }
 
+// @Summary      List asset masters
+// @Description  Get a paginated list of asset masters.
+// @Tags         assets-masters
+// @Produce      json
+// @Param        genre   query int false "Filter by genre ID"
+// @Param        limit   query int false "Number of items to return" default(50)
+// @Param        offset  query int false "Offset for pagination"
+// @Param        order   query string false "Sort order ('asc' or 'desc')" Enums(asc, desc) default(desc)
+// @Success      200 {object} ListAssetMastersResponse
+// @Failure      500 {object} ErrorResponse "Internal server error"
+// @Router       /assets/masters [get]
 func (h *Handler) ListAssetMasters(c *gin.Context) {
 	var q AssetSearchQuery
 	if v := c.Query("genre"); v != "" {
@@ -88,6 +119,18 @@ func (h *Handler) ListAssetMasters(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"items": items, "total": total, "next_offset": nextOffset(total, p)})
 }
 
+// @Summary      Update an asset master
+// @Description  Update details of an existing asset master.
+// @Tags         assets-masters
+// @Accept       json
+// @Produce      json
+// @Param        management_number path string true "Management Number"
+// @Param        assetMaster body UpdateAssetMasterRequest true "Fields to update"
+// @Success      200 {object} AssetMasterResponse
+// @Failure      400 {object} ErrorResponse "Invalid input"
+// @Failure      404 {object} ErrorResponse "Asset master not found"
+// @Failure      500 {object} ErrorResponse "Internal server error"
+// @Router       /assets/masters/{management_number} [put]
 func (h *Handler) UpdateAssetMaster(c *gin.Context) {
 	mng := c.Param("management_number")
 	var req UpdateAssetMasterRequest
@@ -105,6 +148,16 @@ func (h *Handler) UpdateAssetMaster(c *gin.Context) {
 
 // ===== assets =====
 
+// @Summary      Create a new asset instance
+// @Description  Creates a new instance of an asset, linked to an asset master.
+// @Tags         assets
+// @Accept       json
+// @Produce      json
+// @Param        asset body CreateAssetRequest true "Asset to create"
+// @Success      201 {object} AssetResponse
+// @Failure      400 {object} ErrorResponse "Invalid input"
+// @Failure      500 {object} ErrorResponse "Internal server error"
+// @Router       /assets [post]
 func (h *Handler) CreateAsset(c *gin.Context) {
 	var req CreateAssetRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -121,6 +174,16 @@ func (h *Handler) CreateAsset(c *gin.Context) {
 	c.JSON(http.StatusCreated, res)
 }
 
+// @Summary      Get an asset instance
+// @Description  Get details of an asset instance by its ID.
+// @Tags         assets
+// @Produce      json
+// @Param        asset_id path int true "Asset ID"
+// @Success      200 {object} AssetResponse
+// @Failure      400 {object} ErrorResponse "Invalid asset ID"
+// @Failure      404 {object} ErrorResponse "Asset not found"
+// @Failure      500 {object} ErrorResponse "Internal server error"
+// @Router       /assets/{asset_id} [get]
 func (h *Handler) GetAsset(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("asset_id"), 10, 64)
 	if err != nil {
@@ -135,6 +198,23 @@ func (h *Handler) GetAsset(c *gin.Context) {
 	c.JSON(http.StatusOK, res)
 }
 
+// @Summary      List asset instances
+// @Description  Get a paginated list of asset instances with filtering.
+// @Tags         assets
+// @Produce      json
+// @Param        management_number query string false "Filter by management number"
+// @Param        asmi              query int false "Filter by asset master ID"
+// @Param        status_id         query int false "Filter by status ID"
+// @Param        owner             query string false "Filter by owner"
+// @Param        location          query string false "Filter by location"
+// @Param        purchased_from    query string false "Filter by purchased date (start, YYYY-MM-DD)" Format(date)
+// @Param        purchased_to      query string false "Filter by purchased date (end, YYYY-MM-DD)" Format(date)
+// @Param        limit             query int false "Number of items to return" default(50)
+// @Param        offset            query int false "Offset for pagination"
+// @Param        order             query string false "Sort order ('asc' or 'desc')" Enums(asc, desc) default(desc)
+// @Success      200 {object} ListAssetsResponse
+// @Failure      500 {object} ErrorResponse "Internal server error"
+// @Router       /assets [get]
 func (h *Handler) ListAssets(c *gin.Context) {
 	var q AssetSearchQuery
 	if v := c.Query("management_number"); v != "" {
@@ -181,6 +261,18 @@ func (h *Handler) ListAssets(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"items": items, "total": total, "next_offset": nextOffset(total, p)})
 }
 
+// @Summary      Update an asset instance
+// @Description  Update details of an existing asset instance.
+// @Tags         assets
+// @Accept       json
+// @Produce      json
+// @Param        asset_id path int true "Asset ID"
+// @Param        asset    body UpdateAssetRequest true "Fields to update"
+// @Success      200 {object} AssetResponse
+// @Failure      400 {object} ErrorResponse "Invalid input or asset ID"
+// @Failure      404 {object} ErrorResponse "Asset not found"
+// @Failure      500 {object} ErrorResponse "Internal server error"
+// @Router       /assets/{asset_id} [put]
 func (h *Handler) UpdateAsset(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("asset_id"), 10, 64)
 	if err != nil {
@@ -217,6 +309,15 @@ func (h *Handler) RegisterAsset(c *gin.Context) {
 	c.JSON(http.StatusCreated, res)
 }
 
+// @Summary      Get an asset set (master and instance)
+// @Description  Get both master and instance details for an asset by its management number.
+// @Tags         assets-set
+// @Produce      json
+// @Param        management_number path string true "Management Number"
+// @Success      200 {object} AssetSetResponse
+// @Failure      404 {object} ErrorResponse "Asset set not found"
+// @Failure      500 {object} ErrorResponse "Internal server error"
+// @Router       /assets/pair/{management_number} [get]
 func (h *Handler) GetAssetSet(c *gin.Context) {
 	mng := c.Param("management_number")
 	res, err := h.svc.GetAssetSet(c.Request.Context(), mng)
@@ -228,6 +329,18 @@ func (h *Handler) GetAssetSet(c *gin.Context) {
 }
 
 // ===== batch registration =====
+
+// @Summary      Import assets from a CSV file
+// @Description  Batch import assets by uploading a CSV file. The mode query parameter can be 'dry_run' or 'commit'.
+// @Tags         assets-batch
+// @Accept       multipart/form-data
+// @Produce      json
+// @Param        mode query string false "Import mode ('dry_run' or 'commit')" Enums(dry_run, commit) default(commit)
+// @Param        file formData file true "CSV file to import"
+// @Success      200 {object} ImportAssetsResponse
+// @Failure      400 {object} ErrorResponse "Invalid mode or file"
+// @Failure      500 {object} ErrorResponse "Internal server error"
+// @Router       /assets/import [post]
 func (h *Handler) HandleImportAssets(c *gin.Context) {
 	// mode: dry_run | commit（デフォルト commit）
 	mode := strings.ToLower(strings.TrimSpace(c.Query("mode")))
@@ -265,6 +378,14 @@ func (h *Handler) HandleImportAssets(c *gin.Context) {
 	c.JSON(http.StatusOK, res)
 }
 
+// @Summary      Search assets by name
+// @Description  Searches for assets where the master name contains the given query string.
+// @Tags         assets-search
+// @Produce      json
+// @Param        name query string true "Search query for asset name"
+// @Success      200 {array} AssetSetResponse
+// @Failure      500 {object} ErrorResponse "Internal server error"
+// @Router       /assets/search [get]
 func (h *Handler) SearchAssets(c *gin.Context) {
 	nameQuery := c.Query("name") // URLパラメータ ?name=xxx を取得
 
@@ -277,6 +398,17 @@ func (h *Handler) SearchAssets(c *gin.Context) {
 }
 
 // ==== JANコード検索 ====
+
+// @Summary      Lookup product info by JAN/ISBN code
+// @Description  Fetches product name and manufacturer from external APIs using a JAN or ISBN code.
+// @Tags         assets-lookup
+// @Produce      json
+// @Param        jan_code path string true "JAN or ISBN code"
+// @Success      200 {object} JANLookupResponse
+// @Failure      400 {object} ErrorResponse "JAN code is required"
+// @Failure      404 {object} ErrorResponse "Product not found"
+// @Failure      500 {object} ErrorResponse "Internal server error or external API error"
+// @Router       /assets/lookup/{jan_code} [get]
 func (h *Handler) LookupJAN(c *gin.Context) {
 	jan := c.Param("jan_code")
 	if jan == "" {

@@ -37,6 +37,19 @@ type PrintResponse struct {
 	Error   *APIError `json:"error,omitempty"`
 }
 
+// ===== API Specific Responses =====
+
+// ErrorDetail defines the detail of an API error.
+type ErrorDetail struct {
+	Code    string `json:"code" example:"INVALID_ARGUMENT"`
+	Message string `json:"message" example:"invalid input"`
+}
+
+// ErrorResponse defines the standard error response format.
+type ErrorResponse struct {
+	Error ErrorDetail `json:"error"`
+}
+
 /*
 /api/v2/assets/print リクエスト例
 	{
