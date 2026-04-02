@@ -65,9 +65,6 @@ func (s *Service) CreateLend(ctx context.Context, req CreateLendRequest) (*LendR
 		return nil, NewInvalidArgumentError("borrower_id is required")
 	}
 
-	// どちらの経路でも良い:
-	// 1) asset_master_id が指定されている
-	// 2) management_number から引き当てる
 	var assetMasterID int64
 
 	if req.AssetMasterID > 0 {
@@ -82,6 +79,26 @@ func (s *Service) CreateLend(ctx context.Context, req CreateLendRequest) (*LendR
 			return nil, err
 		}
 		assetMasterID = id
+	}
+
+	// ステータス確認(正常，貸出中以外は貸出不可)
+	statusID, err := s.store.GetAssetStatusByMasterID(ctx, assetMasterID)
+	if err != nil {
+		return nil, err
+	}
+
+	if statusID != 1 && statusID != 4 {
+		return nil, NewConflictError("only assets with status normal or lent can be lent")
+	}
+
+	// 在庫数を取得して貸出数量と比較
+	availableQty, err := s.store.GetAvailableQuantityByMasterID(ctx, assetMasterID)
+	if err != nil {
+		return nil, err
+	}
+
+	if req.Quantity > availableQty {
+		return nil, NewConflictError("lend quantity exceeds available stock")
 	}
 
 	idStr, err := s.id.New()
@@ -111,7 +128,6 @@ func (s *Service) CreateLend(ctx context.Context, req CreateLendRequest) (*LendR
 		Returned:      false,
 	}
 
-	// management_number カラムは後方互換用なので、来ていたらそのまま保存
 	if req.ManagementNumber != nil && *req.ManagementNumber != "" {
 		lend.ManagementNumber.String = *req.ManagementNumber
 		lend.ManagementNumber.Valid = true
@@ -130,13 +146,11 @@ func (s *Service) CreateLend(ctx context.Context, req CreateLendRequest) (*LendR
 		lend.Note.Valid = true
 	}
 
-	// 貸出登録実施
 	err = s.store.InsertLend(ctx, lend)
 	if err != nil {
 		return nil, err
 	}
 
-	// 登録後のステータス変更
 	err = s.store.UpdateAssetStatusInLend(ctx, assetMasterID, 4) // 4: 貸出中
 	if err != nil {
 		return nil, err

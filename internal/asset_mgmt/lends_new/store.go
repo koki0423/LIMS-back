@@ -75,6 +75,50 @@ func (s *Store) InsertLend(ctx context.Context, lend *Lend) error {
 	return nil
 }
 
+func (s *Store) GetAvailableQuantityByMasterID(ctx context.Context, assetMasterID int64) (int, error) {
+	query := `
+	SELECT
+		COALESCE(a.total_qty, 0) - COALESCE(o.outstanding_qty, 0) AS available_qty
+	FROM
+		(
+			SELECT asset_master_id, SUM(quantity) AS total_qty
+			FROM assets
+			WHERE asset_master_id = ?
+			GROUP BY asset_master_id
+		) a
+	LEFT JOIN
+		(
+			SELECT
+				l.asset_master_id,
+				COALESCE(SUM(l.quantity), 0) - COALESCE(SUM(r.returned_qty), 0) AS outstanding_qty
+			FROM lends l
+			LEFT JOIN
+				(
+					SELECT lend_id, SUM(quantity) AS returned_qty
+					FROM returns
+					GROUP BY lend_id
+				) r
+				ON l.lend_id = r.lend_id
+			WHERE l.asset_master_id = ?
+			GROUP BY l.asset_master_id
+		) o
+		ON a.asset_master_id = o.asset_master_id
+	`
+
+	row := s.db.QueryRowContext(ctx, query, assetMasterID, assetMasterID)
+
+	var availableQty int
+	err := row.Scan(&availableQty)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, NewNotFoundError("asset not found")
+	}
+	if err != nil {
+		return 0, err
+	}
+
+	return availableQty, nil
+}
+
 func (s *Store) UpdateAssetStatusInLend(ctx context.Context, assetMasterID int64, status int) error {
 	query := `
 	UPDATE assets
@@ -570,4 +614,26 @@ func (s *Store) ResolveMasterID(ctx context.Context, managementNumber string) (i
 		return 0, err
 	}
 	return assetMasterID, nil
+}
+
+func (s *Store) GetAssetStatusByMasterID(ctx context.Context, assetMasterID int64) (int, error) {
+	query := `
+	SELECT status_id
+	FROM assets
+	WHERE asset_master_id = ?
+	LIMIT 1
+	`
+
+	row := s.db.QueryRowContext(ctx, query, assetMasterID)
+
+	var statusID int
+	err := row.Scan(&statusID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, NewNotFoundError("asset not found")
+	}
+	if err != nil {
+		return 0, err
+	}
+
+	return statusID, nil
 }
