@@ -4,6 +4,7 @@
 .pnp.js
 /coverage
 /build
+/docs
 
 # ---- ログ・環境 ----
 .DS_Store
