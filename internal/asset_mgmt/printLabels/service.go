@@ -41,7 +41,7 @@ func (s *Service) ResolveTemplatePath(ctx context.Context, width int, barcodeTyp
 
 func validateTemplateRequest(width int, barcodeType string) error {
 	switch width {
-	case 12, 18, 24, 36:
+	case 9, 12, 18:
 	default:
 		return ErrInvalid("unsupported width")
 	}

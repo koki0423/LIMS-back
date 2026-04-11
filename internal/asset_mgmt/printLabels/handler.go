@@ -14,7 +14,7 @@ func RegisterRoutes(r gin.IRoutes, svc *Service) {
 	h := &Handler{svc: svc}
 	r.POST("/assets/print", h.PrintLabels)
 	r.POST("/assets/print/batch", h.HandlePrintBatch)
-	r.GET("/assets/print/templates/download", h.DownloadTemplate)
+	r.GET("/assets/print/templates", h.DownloadTemplate)
 }
 
 // @Summary      Print a single label
