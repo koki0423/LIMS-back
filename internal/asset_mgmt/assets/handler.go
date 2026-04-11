@@ -29,6 +29,7 @@ func RegisterRoutes(r gin.IRoutes, svc *Service) {
 	r.PUT("/assets/:asset_id", h.UpdateAsset)
 
 	// assest-set
+	r.POST("/assets/pair", h.RegisterAsset) // 便宜上．/assets/pair という名前にしているが，旧実装を廃止したら POST /assets に変更．
 	r.GET("/assets/pair/:management_number", h.GetAssetSet)
 	r.POST("/assets/import", h.HandleImportAssets) //curl -X POST "http://localhost:8443/api/v2/assets/import?mode=commit" -F "file=@./asset.csv"
 
@@ -293,7 +294,21 @@ func (h *Handler) UpdateAsset(c *gin.Context) {
 }
 
 // ===== asset-set =====
-// 将来的にcreateAssetMasterとCreateAssetを廃止してこっちへ移行．ただしAndroidとフロントエンドの対応が終わり次第移行すること．
+// 将来的にcreateAssetMasterとCreateAssetを廃止してこっちへ移行．
+// ただしAndroidとフロントエンドの対応が終わり次第移行すること．
+// 20260411現在でまだ未対応なので旧実装のエンドポイント両方残している．
+
+// @Summary      Create an asset set (master and instance)
+// @Description  Creates an asset master and its asset instance in a single request for single registration flow.
+// @Tags         assets-set
+// @Accept       json
+// @Produce      json
+// @Param        assetSet body CreateAssetSetRequest true "Asset master and asset to create"
+// @Success      201 {object} AssetSetResponse
+// @Failure      400 {object} ErrorResponse "Invalid input"
+// @Failure      409 {object} ErrorResponse "Conflict while creating asset set"
+// @Failure      500 {object} ErrorResponse "Internal server error"
+// @Router       /assets/pair [post]
 func (h *Handler) RegisterAsset(c *gin.Context) {
 	var req CreateAssetSetRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -306,6 +321,7 @@ func (h *Handler) RegisterAsset(c *gin.Context) {
 		c.JSON(toHTTPStatus(err), apiErrFrom(err))
 		return
 	}
+	c.Header("Location", "/assets/pair/"+res.Master.ManagementNumber)
 	c.JSON(http.StatusCreated, res)
 }
 
