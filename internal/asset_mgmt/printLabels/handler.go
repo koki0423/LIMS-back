@@ -14,6 +14,7 @@ func RegisterRoutes(r gin.IRoutes, svc *Service) {
 	h := &Handler{svc: svc}
 	r.POST("/assets/print", h.PrintLabels)
 	r.POST("/assets/print/batch", h.HandlePrintBatch)
+	r.GET("/assets/print/templates/download", h.DownloadTemplate)
 }
 
 // @Summary      Print a single label
@@ -72,6 +73,22 @@ func (h *Handler) HandlePrintBatch(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, res)
+}
+
+func (h *Handler) DownloadTemplate(c *gin.Context) {
+	var q TemplateDownloadQuery
+	if err := c.ShouldBindQuery(&q); err != nil {
+		c.JSON(http.StatusBadRequest, newErrDTO(ErrInvalid("invalid query")))
+		return
+	}
+
+	fullpath, filename, err := h.svc.ResolveTemplatePath(c.Request.Context(), q.Width, q.Type)
+	if err != nil {
+		c.JSON(toHTTPStatus(err), newErrDTO(err))
+		return
+	}
+
+	c.FileAttachment(fullpath, filename)
 }
 
 // ===== helpers =====

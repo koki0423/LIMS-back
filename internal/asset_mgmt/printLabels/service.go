@@ -3,13 +3,57 @@ package printLabels
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 )
 
 type Service struct {
 }
 
 func NewService() *Service { return &Service{} }
+
+func (s *Service) ResolveTemplatePath(ctx context.Context, width int, barcodeType string) (string, string, error) {
+	baseDir, err := os.Getwd()
+	if err != nil {
+		return "", "", ErrInternal("failed to resolve working directory")
+	}
+
+	err = validateTemplateRequest(width, barcodeType)
+	if err != nil {
+		return "", "", ErrInvalid("invalid tape width or code type")
+	}
+
+	tplDir := filepath.Join(baseDir, "internal", "asset_mgmt", "printLabels", "templates")
+	filename := fmt.Sprintf("%d_%s.lw1", width, barcodeType)
+	fullpath := filepath.Join(tplDir, filename)
+
+	if _, err = os.Stat(fullpath); err != nil {
+		if os.IsNotExist(err) {
+			return "", "", ErrNotFound(fmt.Sprintf("template not found: %s", filename))
+		}
+		return "", "", ErrInternal(err.Error())
+	}
+
+	return fullpath, filename, nil
+}
+
+func validateTemplateRequest(width int, barcodeType string) error {
+	switch width {
+	case 12, 18, 24, 36:
+	default:
+		return ErrInvalid("unsupported width")
+	}
+
+	switch barcodeType {
+	case "qrcode", "code128":
+	default:
+		return ErrInvalid("unsupported type")
+	}
+
+	return nil
+}
 
 func (s *Service) PrintLabels(ctx context.Context, input PrintRequest) (*PrintResponse, error) {
 	rows := []PrintRow{{Checked: input.Label.Checked,
