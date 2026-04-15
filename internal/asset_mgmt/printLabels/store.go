@@ -22,8 +22,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
-	"syscall"
 	"time"
 
 	"golang.org/x/text/encoding/japanese"
@@ -194,10 +194,12 @@ func runSPC10(ctx context.Context, spc10 string, option string, printerName stri
 	}
 
 	cmd := exec.Command(spc10, args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	// デバッグ用
-	// cmd.Stdout = os.Stdout
-	// cmd.Stderr = os.Stderr
+	switch runtime.GOOS {
+	case "windows":
+		setPlatformSysProcAttr(cmd)
+	case "linux":
+		// Linux では Windows 固有の SysProcAttr を設定しない。
+	}
 
 	if err := cmd.Start(); err != nil {
 		return err
