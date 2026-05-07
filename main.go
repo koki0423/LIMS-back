@@ -23,6 +23,7 @@ import (
 	"IRIS-backend/internal/asset_mgmt/assets"
 	"IRIS-backend/internal/asset_mgmt/disposals"
 	"IRIS-backend/internal/asset_mgmt/lend"
+	"IRIS-backend/internal/asset_mgmt/printLabels"
 	"IRIS-backend/internal/dbmng"
 	"IRIS-backend/internal/platform/auth"
 	"IRIS-backend/internal/platform/db"
@@ -150,6 +151,7 @@ func registerAPIRoutes(r *gin.Engine, conn *sql.DB, cfg *db.Config) {
 	assets.RegisterRoutes(api, assets.NewService(conn, janClient))
 	lend.RegisterRoutes(api, lend.NewService(conn))
 	disposals.RegisterRoutes(api, disposals.NewService(conn))
+	printLabels.RegisterRoutes(api, printLabels.NewService())
 	dbmng.RegisterRoutes(api, dbmng.NewService(conn))
 	auth.RegisterRoutes(api, auth.NewService(conn))
 

@@ -2,7 +2,7 @@ package printLabels
 
 // ===== Requests =====
 // テンプレートダウンロード
-// GET /api/v2/assets/print/templates/download?width=12&type=qrcode
+// GET /api/v2/assets/print/templates?width=12&type=qrcode
 type TemplateDownloadQuery struct {
 	Width int    `form:"width" binding:"required"`
 	Type  string `form:"type" binding:"required"`
