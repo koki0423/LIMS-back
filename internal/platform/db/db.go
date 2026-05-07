@@ -36,6 +36,7 @@ type YahooConfig struct {
 type Config struct {
 	Version     string         `yaml:"version"`
 	Mode        string         `yaml:"mode"`
+	TLS         bool           `yaml:"tls"`
 	DB          DatabaseConfig `yaml:"database"`
 	Certificate Certs          `yaml:"certificate"`
 	Yahoo       YahooConfig    `yaml:"yahoo"`
@@ -66,6 +67,7 @@ func loadFromEnv() *Config {
 	return &Config{
 		Version: getEnv("APP_VERSION", "1.0"),
 		Mode:    getEnv("APP_MODE", "release"),
+		TLS:     getEnvAsBool("APP_TLS", false),
 		DB: DatabaseConfig{
 			Host:     getEnv("DB_HOST", "mysql"),
 			Port:     getEnvAsInt("DB_PORT", 3306),
@@ -97,6 +99,14 @@ func getEnv(key, fallback string) string {
 func getEnvAsInt(key string, fallback int) int {
 	strValue := getEnv(key, "")
 	if value, err := strconv.Atoi(strValue); err == nil {
+		return value
+	}
+	return fallback
+}
+
+func getEnvAsBool(key string, fallback bool) bool {
+	strValue := getEnv(key, "")
+	if value, err := strconv.ParseBool(strValue); err == nil {
 		return value
 	}
 	return fallback

@@ -3,6 +3,8 @@ package auth
 import (
 	"net/http"
 
+	"IRIS-backend/internal/platform/httpx"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -31,7 +33,10 @@ type MessageResponse struct {
 
 // ErrorResponse represents an error response.
 type ErrorResponse struct {
-	Error string `json:"error" example:"error message"`
+	Error struct {
+		Code    string `json:"code" example:"INVALID_ARGUMENT"`
+		Message string `json:"message" example:"error message"`
+	} `json:"error"`
 }
 
 type LoginRequest struct {
@@ -52,13 +57,13 @@ type LoginRequest struct {
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+		httpx.WriteError(c, http.StatusBadRequest, "INVALID_ARGUMENT", "Invalid request")
 		return
 	}
 
 	token, err := h.svc.Login(c.Request.Context(), req.ID, req.Password)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "IDまたはパスワードが間違っています"})
+		httpx.WriteError(c, http.StatusUnauthorized, "UNAUTHORIZED", "IDまたはパスワードが間違っています")
 		return
 	}
 
@@ -97,7 +102,7 @@ type RegisterRequest struct {
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+		httpx.WriteError(c, http.StatusBadRequest, "INVALID_ARGUMENT", "Invalid request")
 		return
 	}
 
@@ -108,10 +113,10 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 	if err := h.svc.Register(c.Request.Context(), req.ID, req.Password, role); err != nil {
 		if err == ErrAlreadyExists {
-			c.JSON(http.StatusConflict, gin.H{"error": "ID already exists"})
+			httpx.WriteError(c, http.StatusConflict, "CONFLICT", "ID already exists")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "register failed"})
+		httpx.WriteError(c, http.StatusInternalServerError, "INTERNAL", "register failed")
 		return
 	}
 
@@ -132,10 +137,10 @@ func (h *AuthHandler) DeleteAccount(c *gin.Context) {
 
 	if err := h.svc.Delete(c.Request.Context(), id); err != nil {
 		if err == ErrNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+			httpx.WriteError(c, http.StatusNotFound, "NOT_FOUND", "not found")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "delete failed"})
+		httpx.WriteError(c, http.StatusInternalServerError, "INTERNAL", "delete failed")
 		return
 	}
 
@@ -164,20 +169,20 @@ func (h *AuthHandler) ChangeUsername(c *gin.Context) {
 
 	var req ChangeUsernameRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+		httpx.WriteError(c, http.StatusBadRequest, "INVALID_ARGUMENT", "Invalid request")
 		return
 	}
 
 	if err := h.svc.ChangeID(c.Request.Context(), oldID, req.NewID); err != nil {
 		if err == ErrNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+			httpx.WriteError(c, http.StatusNotFound, "NOT_FOUND", "not found")
 			return
 		}
 		if err == ErrAlreadyExists {
-			c.JSON(http.StatusConflict, gin.H{"error": "new id already exists"})
+			httpx.WriteError(c, http.StatusConflict, "CONFLICT", "new id already exists")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "change id failed"})
+		httpx.WriteError(c, http.StatusInternalServerError, "INTERNAL", "change id failed")
 		return
 	}
 

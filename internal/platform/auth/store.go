@@ -62,7 +62,7 @@ LIMIT 1
 func (s *Store) Create(ctx context.Context, a *Account) error {
 	const q = `
 INSERT INTO auth_accounts (id, password_hash, role, is_disabled, created_at)
-VALUES (?, ?, ?, 0, NOW(6))
+VALUES (?, ?, ?, 0, UTC_TIMESTAMP(6))
 `
 	_, err := s.db.ExecContext(ctx, q, a.ID, a.PasswordHash, a.Role)
 	return err

@@ -21,7 +21,7 @@ func (s *Store) InsertMasterTmp(ctx context.Context, in CreateAssetMasterRequest
 	const q = `
 	INSERT INTO assets_master
 	(management_number, name, management_category_id, genre_id, manufacturer, model, created_at)
-	VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`
+	VALUES (?, ?, ?, ?, ?, ?, UTC_TIMESTAMP())`
 	res, err := s.db.ExecContext(ctx, q, tmpMng, in.Name, in.ManagementCategoryID, in.GenreID, in.Manufacturer, in.Model)
 	if err != nil {
 		return 0, err
@@ -603,7 +603,7 @@ func (s *Store) InsertMasterTmpTx(ctx context.Context, tx *sql.Tx, in CreateAsse
 	const q = `
 	INSERT INTO assets_master
 	(management_number, name, management_category_id, genre_id, manufacturer, model, created_at)
-	VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`
+	VALUES (?, ?, ?, ?, ?, ?, UTC_TIMESTAMP())`
 	res, err := tx.ExecContext(ctx, q, tmpMng, in.Name, in.ManagementCategoryID, in.GenreID, in.Manufacturer, in.Model)
 	if err != nil {
 		return 0, err

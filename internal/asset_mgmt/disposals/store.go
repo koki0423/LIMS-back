@@ -3,10 +3,12 @@ package disposals
 import (
 	"context"
 	"database/sql"
-	"fmt"
-	"log"
-	"strings"
 	"errors"
+	"fmt"
+	"strings"
+
+	"IRIS-backend/internal/asset_mgmt/inventory"
+	platformdb "IRIS-backend/internal/platform/db"
 )
 
 type Store struct{ db *sql.DB }
@@ -16,80 +18,47 @@ func NewStore(db *sql.DB) *Store { return &Store{db: db} }
 // --- assets_master / assets 参照 ---
 
 func (s *Store) ResolveMasterID(ctx context.Context, managementNumber string) (uint64, error) {
-	const q = `SELECT asset_master_id FROM assets_master WHERE management_number = ?`
-	var id uint64
-	if err := s.db.QueryRowContext(ctx, q, managementNumber).Scan(&id); err != nil {
-		if err == sql.ErrNoRows {
-			return 0, ErrNotFound("assets_master not found")
-		}
+	return s.resolveMasterID(ctx, s.db, managementNumber)
+}
+
+func (s *Store) ResolveMasterIDTx(ctx context.Context, tx *sql.Tx, managementNumber string) (uint64, error) {
+	return s.resolveMasterID(ctx, tx, managementNumber)
+}
+
+func (s *Store) resolveMasterID(ctx context.Context, q platformdb.DBTX, managementNumber string) (uint64, error) {
+	id, err := inventory.ResolveMasterID(ctx, q, managementNumber)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound("assets_master not found")
+	}
+	if err != nil {
 		return 0, err
 	}
 	return id, nil
 }
 
-func (s *Store) LockAssetRow(ctx context.Context, tx *sql.Tx, masterID uint64) (assetID uint64, quantity uint, err error) {
-	const q = `SELECT asset_id, quantity FROM assets WHERE asset_master_id = ? LIMIT 1 FOR UPDATE`
-	row := tx.QueryRowContext(ctx, q, masterID)
-	if err = row.Scan(&assetID, &quantity); err != nil {
-		if err == sql.ErrNoRows {
-			return 0, 0, ErrNotFound("asset row not found")
-		}
-		return 0, 0, err
+func (s *Store) LockAssetRows(ctx context.Context, tx *sql.Tx, masterID uint64) ([]inventory.LockedAssetRow, error) {
+	rows, err := inventory.LockAssetRowsByMasterID(ctx, tx, int64(masterID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound("asset row not found")
 	}
-	return assetID, quantity, nil
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
-func (s *Store) UpdateAssetQuantity(ctx context.Context, tx *sql.Tx, assetID uint64, delta int) error {
-	const q = `UPDATE assets SET quantity = quantity + ? WHERE asset_id = ?`
-	res, err := tx.ExecContext(ctx, q, delta, assetID)
-	if err != nil {
+func (s *Store) ApplyQuantityAdjustments(ctx context.Context, tx *sql.Tx, adjustments []inventory.QuantityAdjustment) error {
+	if err := inventory.ApplyQuantityAdjustments(ctx, tx, adjustments); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound("asset row not found")
+		}
 		return err
-	}
-	if aff, _ := res.RowsAffected(); aff != 1 {
-		return ErrInternal("failed to update assets.quantity")
 	}
 	return nil
 }
 
-func (s *Store) UpdateAssetStatus(ctx context.Context, tx *sql.Tx, assetID uint64, statusID int) error {
-	const q = `
-		UPDATE assets
-		SET status_id = ?
-		WHERE asset_id = ?
-		AND quantity = 0`
-	res, err := tx.ExecContext(ctx, q, statusID, assetID)
-	if err != nil {
-		log.Printf("Error executing UpdateAssetStatus: %v", err)
-		return err
-	}
-	aff, err := res.RowsAffected()
-	if err != nil {
-		log.Printf("Error getting affected rows: %v", err)
-		return err
-	}
-	if aff == 1 {
-		return nil // 変更あり
-	}
-
-	// 0件の理由を切り分け（冪等成功 or 前提崩れ）
-	var curQty, curStatus int
-	err = tx.QueryRowContext(ctx,
-		`SELECT quantity, status_id FROM assets WHERE asset_id = ? FOR UPDATE`,
-		assetID,
-	).Scan(&curQty, &curStatus)
-	if errors.Is(err, sql.ErrNoRows) {
-		return ErrNotFound("asset")
-	}
-	if err != nil {
-		return err
-	}
-	if curQty != 0 {
-		return fmt.Errorf("precondition failed: quantity must be 0 (got %d)", curQty)
-	}
-	if curStatus == statusID {
-		return nil // 変更不要（冪等成功）
-	}
-	return ErrInternal("failed to update assets.status")
+func (s *Store) ReconcileAssetStatus(ctx context.Context, tx *sql.Tx, masterID uint64) error {
+	return inventory.ReconcileAssetStatus(ctx, tx, int64(masterID))
 }
 
 // --- disposals ---
@@ -99,7 +68,7 @@ func (s *Store) InsertDisposal(ctx context.Context, tx *sql.Tx, m *Disposal) (ui
 	INSERT INTO disposals
 	(disposal_ulid, management_number, quantity, disposed_at, reason, processed_by_id)
 	VALUES
-	(?, ?, ?, CURRENT_TIMESTAMP, ?, ?)`
+	(?, ?, ?, UTC_TIMESTAMP(), ?, ?)`
 	res, err := tx.ExecContext(ctx, q,
 		m.DisposalULID, m.ManagementNumber, m.Quantity,
 		nullStrOrNil(m.Reason), nullStrOrNil(m.ProcessedByID),

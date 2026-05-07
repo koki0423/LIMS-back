@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gin-contrib/cors"
@@ -20,14 +22,10 @@ import (
 
 	"IRIS-backend/internal/asset_mgmt/assets"
 	"IRIS-backend/internal/asset_mgmt/disposals"
-	"IRIS-backend/internal/asset_mgmt/lends_new"
-	"IRIS-backend/internal/asset_mgmt/printLabels"
-	"IRIS-backend/internal/attendance"
+	"IRIS-backend/internal/asset_mgmt/lend"
 	"IRIS-backend/internal/dbmng"
 	"IRIS-backend/internal/platform/auth"
 	"IRIS-backend/internal/platform/db"
-
-
 )
 
 const (
@@ -86,12 +84,9 @@ func main() {
 		Handler: router,
 	}
 
-	// TLS の有無を決める（今は一旦 TLS 無効にしておく）
-	certFile, keyFile := buildTLSPaths(cfg)
-	disableTLSForNow := true
-	if disableTLSForNow {
-		certFile = ""
-		keyFile = ""
+	certFile, keyFile, err := resolveServerTLS(cfg)
+	if err != nil {
+		log.Fatalf("[FATAL] failed to resolve TLS configuration: %v", err)
 	}
 
 	// サーバ起動
@@ -153,10 +148,8 @@ func registerAPIRoutes(r *gin.Engine, conn *sql.DB, cfg *db.Config) {
 	janClient := assets.NewJANClient(cfg.Yahoo.AppID)
 
 	assets.RegisterRoutes(api, assets.NewService(conn, janClient))
-	lends_new.RegisterRoutes(api, lends_new.NewService(conn))
+	lend.RegisterRoutes(api, lend.NewService(conn))
 	disposals.RegisterRoutes(api, disposals.NewService(conn))
-	attendance.RegisterRoutes(api, attendance.NewService(conn))
-	printLabels.RegisterRoutes(api, printLabels.NewService())
 	dbmng.RegisterRoutes(api, dbmng.NewService(conn))
 	auth.RegisterRoutes(api, auth.NewService(conn))
 
@@ -177,18 +170,33 @@ func registerAPIRoutes(r *gin.Engine, conn *sql.DB, cfg *db.Config) {
 
 // --- TLS / サーバ起動 ---
 
-func buildTLSPaths(cfg *db.Config) (string, string) {
-	var certFile, keyFile string
-
-	if cfg.Mode == modeDev {
-		certFile = fmt.Sprintf("config/tls/dev/%s", cfg.Certificate.Cert)
-		keyFile = fmt.Sprintf("config/tls/dev/%s", cfg.Certificate.Key)
-	} else {
-		certFile = fmt.Sprintf("config/tls/release/%s", cfg.Certificate.Cert)
-		keyFile = fmt.Sprintf("config/tls/release/%s", cfg.Certificate.Key)
+func resolveServerTLS(cfg *db.Config) (string, string, error) {
+	if !cfg.TLS {
+		return "", "", nil
 	}
 
-	return certFile, keyFile
+	return buildTLSPaths(cfg)
+}
+
+func buildTLSPaths(cfg *db.Config) (string, string, error) {
+	certName := strings.TrimSpace(cfg.Certificate.Cert)
+	keyName := strings.TrimSpace(cfg.Certificate.Key)
+	if certName == "" || keyName == "" {
+		return "", "", fmt.Errorf("tls is enabled but certificate cert/key are not configured")
+	}
+
+	baseDir := filepath.Join("config", "tls", cfg.Mode)
+	certFile := filepath.Join(baseDir, certName)
+	keyFile := filepath.Join(baseDir, keyName)
+
+	if _, err := os.Stat(certFile); err != nil {
+		return "", "", fmt.Errorf("certificate file not found: %s", certFile)
+	}
+	if _, err := os.Stat(keyFile); err != nil {
+		return "", "", fmt.Errorf("key file not found: %s", keyFile)
+	}
+
+	return certFile, keyFile, nil
 }
 
 func runServer(srv *http.Server, certFile, keyFile string) {

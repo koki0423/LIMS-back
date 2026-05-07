@@ -11,7 +11,7 @@ type Clock interface {
 type clock struct{}
 
 func (c *clock) Now() time.Time {
-	return time.Now()
+	return time.Now().UTC()
 }
 
 func NewClock() Clock {

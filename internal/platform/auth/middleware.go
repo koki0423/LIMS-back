@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"strings"
 
+	"IRIS-backend/internal/platform/httpx"
+
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -18,19 +20,19 @@ func RequireAuth(secret []byte) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		h := c.GetHeader("Authorization")
 		if h == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing Authorization header"})
+			httpx.AbortError(c, http.StatusUnauthorized, "UNAUTHORIZED", "missing Authorization header")
 			return
 		}
 
 		parts := strings.SplitN(h, " ", 2)
 		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid Authorization header"})
+			httpx.AbortError(c, http.StatusUnauthorized, "UNAUTHORIZED", "invalid Authorization header")
 			return
 		}
 
 		tokenStr := strings.TrimSpace(parts[1])
 		if tokenStr == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "empty token"})
+			httpx.AbortError(c, http.StatusUnauthorized, "UNAUTHORIZED", "empty token")
 			return
 		}
 
@@ -42,24 +44,24 @@ func RequireAuth(secret []byte) gin.HandlerFunc {
 			return secret, nil
 		}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}))
 		if err != nil || token == nil || !token.Valid {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+			httpx.AbortError(c, http.StatusUnauthorized, "UNAUTHORIZED", "invalid token")
 			return
 		}
 
 		claims, ok := token.Claims.(jwt.MapClaims)
 		if !ok {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid claims"})
+			httpx.AbortError(c, http.StatusUnauthorized, "UNAUTHORIZED", "invalid claims")
 			return
 		}
 
 		subAny, ok := claims["sub"]
 		if !ok {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing sub"})
+			httpx.AbortError(c, http.StatusUnauthorized, "UNAUTHORIZED", "missing sub")
 			return
 		}
 		sub, ok := subAny.(string)
 		if !ok || sub == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid sub"})
+			httpx.AbortError(c, http.StatusUnauthorized, "UNAUTHORIZED", "invalid sub")
 			return
 		}
 
@@ -91,19 +93,19 @@ func RequireRole(roles ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		v, ok := c.Get(CtxRoleKey)
 		if !ok {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "missing role"})
+			httpx.AbortError(c, http.StatusForbidden, "FORBIDDEN", "missing role")
 			return
 		}
 
 		role, ok := v.(string)
 		if !ok || role == "" {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "invalid role"})
+			httpx.AbortError(c, http.StatusForbidden, "FORBIDDEN", "invalid role")
 			return
 		}
 
 		_, allowed := roleSet[role]
 		if !allowed {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+			httpx.AbortError(c, http.StatusForbidden, "FORBIDDEN", "forbidden")
 			return
 		}
 

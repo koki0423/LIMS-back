@@ -5,9 +5,11 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"errors"
+	"log"
 	"strings"
 	"time"
-	"log"
+
+	"IRIS-backend/internal/asset_mgmt/inventory"
 
 	ulid "github.com/oklog/ulid/v2"
 )
@@ -15,10 +17,12 @@ import (
 // ---- Clock & ID ----
 type Clock interface{ Now() time.Time }
 type realClock struct{}
+
 func (realClock) Now() time.Time { return time.Now().UTC() }
 
 type IDGen interface{ NewULID(t time.Time) string }
 type ulidGen struct{}
+
 func (ulidGen) NewULID(t time.Time) string {
 	entropy := ulid.Monotonic(rand.Reader, 0)
 	return ulid.MustNew(ulid.Timestamp(t), entropy).String()
@@ -44,7 +48,9 @@ func NewService(db *sql.DB) *Service {
 
 func (s *Service) withTx(ctx context.Context, fn func(*sql.Tx) error) error {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{})
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	if err := fn(tx); err != nil {
 		_ = tx.Rollback()
 		return err
@@ -63,31 +69,35 @@ func (s *Service) CreateDisposal(ctx context.Context, managementNumber string, i
 	var resp DisposalResponse
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		// master解決
-		masterID, err := s.store.ResolveMasterID(ctx, managementNumber)
-		if err != nil { return err }
-
-		// 在庫ロック & チェック
-		assetID, qty, err := s.store.LockAssetRow(ctx, tx, masterID) // SELECT ... FOR UPDATE
-		if err != nil { return err }
-		if int(qty) - int(in.Quantity) < 0 {
-			return ErrConflict("insufficient stock")
-		}
-		// log.Printf("Locked assetID: %d with quantity: %d", assetID, qty)
-
-		// 在庫減算
-		if err := s.store.UpdateAssetQuantity(ctx, tx, assetID, -int(in.Quantity)); err != nil {
+		masterID, err := s.store.ResolveMasterIDTx(ctx, tx, managementNumber)
+		if err != nil {
 			return err
 		}
-		log.Printf("Updated assetID: %d quantity by %d", assetID, -int(in.Quantity))
 
-		// 減算後が0ならステータスだけ変更
-		newQty := int(qty) - int(in.Quantity)
-		if newQty == 0 {
-			const StatusZeroStock = 5
-			if err := s.store.UpdateAssetStatus(ctx, tx, assetID, StatusZeroStock); err != nil {
-				log.Printf("Failed to update asset status: %v", err)
-				return err
-			}
+		// 在庫ロック & 廃棄計画作成
+		lockedRows, err := s.store.LockAssetRows(ctx, tx, masterID)
+		if err != nil {
+			return err
+		}
+
+		adjustments, err := inventory.ComputeDisposalPlan(lockedRows, int(in.Quantity))
+		if errors.Is(err, inventory.ErrInsufficientStock) {
+			return ErrConflict("insufficient stock")
+		}
+		if errors.Is(err, inventory.ErrInvalidQuantity) {
+			return ErrInvalid("quantity must be > 0")
+		}
+		if err != nil {
+			return err
+		}
+
+		if err := s.store.ApplyQuantityAdjustments(ctx, tx, adjustments); err != nil {
+			return err
+		}
+
+		if err := s.store.ReconcileAssetStatus(ctx, tx, masterID); err != nil {
+			log.Printf("Failed to reconcile asset status: %v", err)
+			return err
 		}
 
 		// 廃棄挿入
@@ -116,10 +126,11 @@ func (s *Service) CreateDisposal(ctx context.Context, managementNumber string, i
 	return resp, err
 }
 
-
 func (s *Service) GetDisposalByULID(ctx context.Context, ul string) (DisposalResponse, error) {
 	m, err := s.store.GetByULID(ctx, ul)
-	if err != nil { return DisposalResponse{}, err }
+	if err != nil {
+		return DisposalResponse{}, err
+	}
 	return DisposalResponse{
 		DisposalULID:     m.DisposalULID,
 		ManagementNumber: m.ManagementNumber,
@@ -138,7 +149,9 @@ type ListResult struct {
 
 func (s *Service) ListDisposals(ctx context.Context, f DisposalFilter, p Page) (ListResult, error) {
 	rows, total, err := s.store.List(ctx, f, p)
-	if err != nil { return ListResult{}, err }
+	if err != nil {
+		return ListResult{}, err
+	}
 	items := make([]DisposalResponse, 0, len(rows))
 	for _, m := range rows {
 		items = append(items, DisposalResponse{
@@ -151,7 +164,9 @@ func (s *Service) ListDisposals(ctx context.Context, f DisposalFilter, p Page) (
 		})
 	}
 	next := p.Offset + p.Limit
-	if next >= int(total) { next = 0 }
+	if next >= int(total) {
+		next = 0
+	}
 	return ListResult{Items: items, Total: total, NextOffset: next}, nil
 }
 

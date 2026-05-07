@@ -115,6 +115,8 @@ func (s *Service) UpdateAssetMaster(ctx context.Context, managementNumber string
 // ===== Assets =====
 
 func (s *Service) CreateAsset(ctx context.Context, in CreateAssetRequest) (AssetResponse, error) {
+	in = normalizeCreateAssetRequest(in)
+
 	var masterID uint64
 	if in.AssetMasterID == nil {
 		log.Printf("asset_master_id is required")
@@ -170,6 +172,8 @@ func (s *Service) ListAssets(ctx context.Context, q AssetSearchQuery, p Page) ([
 }
 
 func (s *Service) UpdateAsset(ctx context.Context, id uint64, in UpdateAssetRequest) (AssetResponse, error) {
+	in = normalizeUpdateAssetRequest(in)
+
 	if in.Quantity != nil && int(*in.Quantity) < 0 {
 		return AssetResponse{}, ErrInvalid("quantity must be >= 0")
 	}
@@ -186,6 +190,8 @@ func (s *Service) UpdateAsset(ctx context.Context, id uint64, in UpdateAssetRequ
 // ===== Asset Set =====
 // 将来的にcreateAssetMasterとCreateAssetを廃止してこっちへ移行．ただしAndroidとフロントエンドの対応が終わり次第移行すること．
 func (s *Service) CreateAssetSet(ctx context.Context, req CreateAssetSetRequest) (AssetSetResponse, error) {
+	req.Asset = normalizeCreateAssetRequest(req.Asset)
+
 	// ---- validate master ----
 	if strings.TrimSpace(req.Master.Name) == "" ||
 		strings.TrimSpace(req.Master.Manufacturer) == "" ||
@@ -461,7 +467,7 @@ func parseAssetSetFromCSVRow(rec []string, col map[string]int) (CreateAssetSetRe
 	if err != nil {
 		return req, ErrInvalid("purchased_at must be RFC3339")
 	}
-	req.Asset.PurchasedAt = t
+	req.Asset.PurchasedAt = t.UTC()
 
 	sid, err := parseUint(get("status_id"))
 	if err != nil {
@@ -483,6 +489,7 @@ func parseAssetSetFromCSVRow(rec []string, col map[string]int) (CreateAssetSetRe
 		if e != nil {
 			return req, ErrInvalid("last_checked_at must be RFC3339 when present")
 		}
+		tt = tt.UTC()
 		req.Asset.LastCheckedAt = &tt
 	}
 
@@ -526,4 +533,27 @@ func parseUint(s string) (uint, error) {
 		return 0, err
 	}
 	return uint(u64), nil
+}
+
+func normalizeCreateAssetRequest(in CreateAssetRequest) CreateAssetRequest {
+	if !in.PurchasedAt.IsZero() {
+		in.PurchasedAt = in.PurchasedAt.UTC()
+	}
+	if in.LastCheckedAt != nil {
+		t := in.LastCheckedAt.UTC()
+		in.LastCheckedAt = &t
+	}
+	return in
+}
+
+func normalizeUpdateAssetRequest(in UpdateAssetRequest) UpdateAssetRequest {
+	if in.PurchasedAt != nil {
+		t := in.PurchasedAt.UTC()
+		in.PurchasedAt = &t
+	}
+	if in.LastCheckedAt != nil {
+		t := in.LastCheckedAt.UTC()
+		in.LastCheckedAt = &t
+	}
+	return in
 }
