@@ -1,4 +1,4 @@
-package lends_new
+package lend
 
 import "time"
 
@@ -63,6 +63,8 @@ type ReturnResponse struct {
 
 // ErrorResponse defines the standard error response format.
 type ErrorResponse struct {
-	Code    string `json:"code" example:"INVALID_ARGUMENT"`
-	Message string `json:"message" example:"invalid input"`
+	Error struct {
+		Code    string `json:"code" example:"INVALID_ARGUMENT"`
+		Message string `json:"message" example:"invalid input"`
+	} `json:"error"`
 }

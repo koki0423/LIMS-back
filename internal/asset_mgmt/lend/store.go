@@ -1,4 +1,4 @@
-package lends_new
+package lend
 
 import (
 	"context"
@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	// "time"
+
+	"IRIS-backend/internal/asset_mgmt/inventory"
+	platformdb "IRIS-backend/internal/platform/db"
 )
 
 type Store struct {
@@ -17,6 +19,14 @@ func NewStore(db *sql.DB) *Store { return &Store{db: db} }
 
 // 貸出INSERT
 func (s *Store) InsertLend(ctx context.Context, lend *Lend) error {
+	return insertLend(ctx, s.db, lend)
+}
+
+func (s *Store) InsertLendTx(ctx context.Context, tx *sql.Tx, lend *Lend) error {
+	return insertLend(ctx, tx, lend)
+}
+
+func insertLend(ctx context.Context, q platformdb.DBTX, lend *Lend) error {
 	query := `
 	INSERT INTO lends
 	(lend_ulid, asset_master_id, management_number, quantity, borrower_id,
@@ -52,7 +62,7 @@ func (s *Store) InsertLend(ctx context.Context, lend *Lend) error {
 		note = nil
 	}
 
-	res, err := s.db.ExecContext(ctx, query,
+	res, err := q.ExecContext(ctx, query,
 		lend.LendULID,
 		lend.AssetMasterID,
 		managementNumber,
@@ -76,79 +86,22 @@ func (s *Store) InsertLend(ctx context.Context, lend *Lend) error {
 }
 
 func (s *Store) GetAvailableQuantityByMasterID(ctx context.Context, assetMasterID int64) (int, error) {
-	query := `
-	SELECT
-		COALESCE(a.total_qty, 0) - COALESCE(o.outstanding_qty, 0) AS available_qty
-	FROM
-		(
-			SELECT asset_master_id, SUM(quantity) AS total_qty
-			FROM assets
-			WHERE asset_master_id = ?
-			GROUP BY asset_master_id
-		) a
-	LEFT JOIN
-		(
-			SELECT
-				l.asset_master_id,
-				COALESCE(SUM(l.quantity), 0) - COALESCE(SUM(r.returned_qty), 0) AS outstanding_qty
-			FROM lends l
-			LEFT JOIN
-				(
-					SELECT lend_id, SUM(quantity) AS returned_qty
-					FROM returns
-					GROUP BY lend_id
-				) r
-				ON l.lend_id = r.lend_id
-			WHERE l.asset_master_id = ?
-			GROUP BY l.asset_master_id
-		) o
-		ON a.asset_master_id = o.asset_master_id
-	`
+	return getAvailableQuantityByMasterID(ctx, s.db, assetMasterID)
+}
 
-	row := s.db.QueryRowContext(ctx, query, assetMasterID, assetMasterID)
+func (s *Store) GetAvailableQuantityByMasterIDTx(ctx context.Context, tx *sql.Tx, assetMasterID int64) (int, error) {
+	return getAvailableQuantityByMasterID(ctx, tx, assetMasterID)
+}
 
-	var availableQty int
-	err := row.Scan(&availableQty)
+func getAvailableQuantityByMasterID(ctx context.Context, q platformdb.DBTX, assetMasterID int64) (int, error) {
+	availableQty, err := inventory.GetAvailableQuantityByMasterID(ctx, q, assetMasterID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, NewNotFoundError("asset not found")
 	}
 	if err != nil {
 		return 0, err
 	}
-
 	return availableQty, nil
-}
-
-func (s *Store) GetManagementCategoryIDByMasterID(ctx context.Context, assetMasterID int64) (int, error) {
-	query := `
-	SELECT management_category_id
-	FROM assets_master
-	WHERE asset_master_id = ?
-	LIMIT 1
-	`
-
-	row := s.db.QueryRowContext(ctx, query, assetMasterID)
-
-	var managementCategoryID int
-	err := row.Scan(&managementCategoryID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, NewNotFoundError("asset master not found")
-	}
-	if err != nil {
-		return 0, err
-	}
-
-	return managementCategoryID, nil
-}
-
-func (s *Store) UpdateAssetStatusInLend(ctx context.Context, assetMasterID int64, status int) error {
-	query := `
-	UPDATE assets
-	SET status_id = ?
-	WHERE asset_master_id = ?
-	`
-	_, err := s.db.ExecContext(ctx, query, status, assetMasterID)
-	return err
 }
 
 // 貸出1件取得
@@ -341,16 +294,6 @@ func (s *Store) InsertReturn(ctx context.Context, ret *Return) error {
 	}
 	ret.ReturnID = id
 	return nil
-}
-
-func (s *Store) UpdateAssetStatusInReturn(ctx context.Context, assetMasterID int64, status int) error {
-	query := `
-	UPDATE assets
-	SET status_id = ?
-	WHERE asset_master_id = ?
-	`
-	_, err := s.db.ExecContext(ctx, query, status, assetMasterID)
-	return err
 }
 
 // 返却1件取得
@@ -619,43 +562,66 @@ func (s *Store) ResolveMasterID(ctx context.Context, managementNumber string) (i
 		return 0, NewInvalidArgumentError("management_number is required")
 	}
 
-	query := `
-	SELECT asset_master_id
-	FROM assets_master
-	WHERE management_number = ?
-	LIMIT 1
-	`
-	row := s.db.QueryRowContext(ctx, query, managementNumber)
+	return s.resolveMasterID(ctx, s.db, managementNumber)
+}
 
-	var assetMasterID int64
-	err := row.Scan(&assetMasterID)
+func (s *Store) ResolveMasterIDTx(ctx context.Context, tx *sql.Tx, managementNumber string) (int64, error) {
+	if managementNumber == "" {
+		return 0, NewInvalidArgumentError("management_number is required")
+	}
+	return s.resolveMasterID(ctx, tx, managementNumber)
+}
+
+func (s *Store) resolveMasterID(ctx context.Context, q platformdb.DBTX, managementNumber string) (int64, error) {
+	assetMasterID, err := inventory.ResolveMasterID(ctx, q, managementNumber)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, NewNotFoundError("asset master not found for given management_number")
 	}
 	if err != nil {
 		return 0, err
 	}
-	return assetMasterID, nil
+	return int64(assetMasterID), nil
 }
 
-func (s *Store) GetAssetStatusByMasterID(ctx context.Context, assetMasterID int64) (int, error) {
-	query := `
-	SELECT status_id
-	FROM assets
-	WHERE asset_master_id = ?
-	LIMIT 1
-	`
-
-	row := s.db.QueryRowContext(ctx, query, assetMasterID)
-
-	var statusID int
-	err := row.Scan(&statusID)
+func (s *Store) LockAssetRowsByMasterID(ctx context.Context, tx *sql.Tx, assetMasterID int64) ([]inventory.LockedAssetRow, error) {
+	rows, err := inventory.LockAssetRowsByMasterID(ctx, tx, assetMasterID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return 0, NewNotFoundError("asset not found")
+		return nil, NewNotFoundError("asset not found")
 	}
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
+	return rows, nil
+}
 
-	return statusID, nil
+func (s *Store) ReconcileAssetStatus(ctx context.Context, assetMasterID int64) error {
+	return inventory.ReconcileAssetStatus(ctx, s.db, assetMasterID)
+}
+
+func (s *Store) ReconcileAssetStatusTx(ctx context.Context, tx *sql.Tx, assetMasterID int64) error {
+	return inventory.ReconcileAssetStatus(ctx, tx, assetMasterID)
+}
+
+func (s *Store) UpdateAssetLocationTx(ctx context.Context, tx *sql.Tx, assetMasterID int64, location string) error {
+	const query = `
+	UPDATE assets
+	SET location = ?
+	WHERE asset_master_id = ?`
+
+	if _, err := tx.ExecContext(ctx, query, location, assetMasterID); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Store) ResetAssetLocationToDefaultTx(ctx context.Context, tx *sql.Tx, assetMasterID int64) error {
+	const query = `
+	UPDATE assets
+	SET location = default_location
+	WHERE asset_master_id = ?`
+
+	if _, err := tx.ExecContext(ctx, query, assetMasterID); err != nil {
+		return err
+	}
+	return nil
 }

@@ -1,4 +1,4 @@
-package lends_new
+package lend
 
 import "fmt"
 

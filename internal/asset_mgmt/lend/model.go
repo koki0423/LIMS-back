@@ -1,4 +1,4 @@
-package lends_new
+package lend
 
 import (
 	"database/sql"
@@ -33,19 +33,19 @@ type Return struct {
 
 // 貸出リスト取得用の検索条件
 type LendFilter struct {
-	BorrowerID     string
-	AssetMasterID  *int64
+	BorrowerID       string
+	AssetMasterID    *int64
 	ManagementNumber string
-	Returned       *bool
-	Limit          int
-	Offset         int
+	Returned         *bool
+	Limit            int
+	Offset           int
 }
 
 // 返却リスト取得用の検索条件
 type ReturnFilter struct {
-	BorrowerID     string // joins lends.borrower_id で絞る場合用
-	AssetMasterID  *int64
-	LendID         *int64
-	Limit          int
-	Offset         int
+	BorrowerID    string // joins lends.borrower_id で絞る場合用
+	AssetMasterID *int64
+	LendID        *int64
+	Limit         int
+	Offset        int
 }

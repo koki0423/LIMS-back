@@ -1,9 +1,11 @@
-package lends_new
+package lend
 
 import (
 	"errors"
 	"net/http"
 	"strconv"
+
+	"IRIS-backend/internal/platform/httpx"
 
 	"github.com/gin-gonic/gin"
 )
@@ -43,10 +45,7 @@ func RegisterRoutes(r gin.IRoutes, svc *Service) {
 func (h *LendHandler) CreateLend(c *gin.Context) {
 	var req CreateLendRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    ErrCodeInvalidArgument,
-			"message": err.Error(),
-		})
+		httpx.WriteError(c, http.StatusBadRequest, ErrCodeInvalidArgument, err.Error())
 		return
 	}
 
@@ -73,10 +72,7 @@ func (h *LendHandler) CreateLend(c *gin.Context) {
 func (h *LendHandler) CreateReturn(c *gin.Context) {
 	var req CreateReturnRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    ErrCodeInvalidArgument,
-			"message": err.Error(),
-		})
+		httpx.WriteError(c, http.StatusBadRequest, ErrCodeInvalidArgument, err.Error())
 		return
 	}
 
@@ -104,28 +100,19 @@ func (h *LendHandler) CreateReturn(c *gin.Context) {
 func (h *LendHandler) CreateReturnByLendKey(c *gin.Context) {
 	lendKey := c.Param("lend_key")
 	if lendKey == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    ErrCodeInvalidArgument,
-			"message": "lend_key (id or ulid) is required",
-		})
+		httpx.WriteError(c, http.StatusBadRequest, ErrCodeInvalidArgument, "lend_key (id or ulid) is required")
 		return
 	}
 
 	var req CreateReturnByKeyRequest
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    ErrCodeInvalidArgument,
-			"message": err.Error(),
-		})
+		httpx.WriteError(c, http.StatusBadRequest, ErrCodeInvalidArgument, err.Error())
 		return
 	}
 
 	if req.Quantity <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    ErrCodeInvalidArgument,
-			"message": "quantity must be > 0",
-		})
+		httpx.WriteError(c, http.StatusBadRequest, ErrCodeInvalidArgument, "quantity must be > 0")
 		return
 	}
 
@@ -166,10 +153,7 @@ func (h *LendHandler) CreateReturnByLendKey(c *gin.Context) {
 func (h *LendHandler) GetLend(c *gin.Context) {
 	key := c.Param("lend_id")
 	if key == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    ErrCodeInvalidArgument,
-			"message": "lend_id (id or ulid) is required",
-		})
+		httpx.WriteError(c, http.StatusBadRequest, ErrCodeInvalidArgument, "lend_id (id or ulid) is required")
 		return
 	}
 
@@ -254,10 +238,7 @@ func (h *LendHandler) ListLends(c *gin.Context) {
 func (h *LendHandler) GetReturn(c *gin.Context) {
 	key := c.Param("return_id")
 	if key == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    ErrCodeInvalidArgument,
-			"message": "return_id (id or ulid) is required",
-		})
+		httpx.WriteError(c, http.StatusBadRequest, ErrCodeInvalidArgument, "return_id (id or ulid) is required")
 		return
 	}
 
@@ -339,16 +320,10 @@ func writeError(c *gin.Context, err error) {
 		default:
 			status = http.StatusInternalServerError
 		}
-		c.JSON(status, gin.H{
-			"code":    dErr.Code,
-			"message": dErr.Message,
-		})
+		httpx.WriteError(c, status, dErr.Code, dErr.Message)
 		return
 	}
 
 	// 想定外エラー
-	c.JSON(http.StatusInternalServerError, gin.H{
-		"code":    ErrCodeInternal,
-		"message": err.Error(),
-	})
+	httpx.WriteError(c, http.StatusInternalServerError, ErrCodeInternal, err.Error())
 }

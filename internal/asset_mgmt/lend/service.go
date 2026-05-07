@@ -1,4 +1,4 @@
-package lends_new
+package lend
 
 import (
 	"context"
@@ -6,6 +6,8 @@ import (
 	"database/sql"
 	"strconv"
 	"time"
+
+	"IRIS-backend/internal/asset_mgmt/inventory"
 
 	"github.com/oklog/ulid/v2"
 )
@@ -19,7 +21,7 @@ type Clock interface {
 type realClock struct{}
 
 func (realClock) Now() time.Time {
-	return time.Now()
+	return time.Now().UTC()
 }
 
 type IDGen interface {
@@ -65,8 +67,28 @@ func (s *Service) CreateLend(ctx context.Context, req CreateLendRequest) (*LendR
 		return nil, NewInvalidArgumentError("borrower_id is required")
 	}
 
-	var assetMasterID int64
+	idStr, err := s.id.New()
+	if err != nil {
+		return nil, err
+	}
 
+	now := s.clock.Now()
+	dueOnTime, dueOnValid, err := parseDueOnUTC(req.DueOn)
+	if err != nil {
+		return nil, err
+	}
+
+	tx, err := s.store.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	var assetMasterID int64
 	if req.AssetMasterID > 0 {
 		assetMasterID = req.AssetMasterID
 	} else {
@@ -74,55 +96,27 @@ func (s *Service) CreateLend(ctx context.Context, req CreateLendRequest) (*LendR
 			return nil, NewInvalidArgumentError("either asset_master_id or management_number is required")
 		}
 
-		id, err := s.store.ResolveMasterID(ctx, *req.ManagementNumber)
-		if err != nil {
+		id, resolveErr := s.store.ResolveMasterIDTx(ctx, tx, *req.ManagementNumber)
+		if resolveErr != nil {
+			err = resolveErr
 			return nil, err
 		}
 		assetMasterID = id
 	}
 
-	// 状態ステータス確認(正常，貸出中以外は貸出不可)
-	statusID, err := s.store.GetAssetStatusByMasterID(ctx, assetMasterID)
-	if err != nil {
+	if _, lockErr := s.store.LockAssetRowsByMasterID(ctx, tx, assetMasterID); lockErr != nil {
+		err = lockErr
 		return nil, err
 	}
 
-	if statusID != 1 && statusID != 4 {
-		return nil, NewConflictError("only assets with status normal or lent can be lent")
-	}
-
-	// 貸出管理カテゴリIDを取得（貸出中のステータス更新に必要）
-	managementCategoryID, err := s.store.GetManagementCategoryIDByMasterID(ctx, assetMasterID)
-	if err != nil {
+	availableQty, availableErr := s.store.GetAvailableQuantityByMasterIDTx(ctx, tx, assetMasterID)
+	if availableErr != nil {
+		err = availableErr
 		return nil, err
 	}
-
-	// 在庫数を取得して貸出数量と比較
-	availableQty, err := s.store.GetAvailableQuantityByMasterID(ctx, assetMasterID)
-	if err != nil {
-		return nil, err
-	}
-
 	if req.Quantity > availableQty {
-		return nil, NewConflictError("lend quantity exceeds available stock")
-	}
-
-	idStr, err := s.id.New()
-	if err != nil {
+		err = NewConflictError("lend quantity exceeds available stock")
 		return nil, err
-	}
-
-	now := s.clock.Now()
-
-	var dueOnTime time.Time
-	var dueOnValid bool
-	if req.DueOn != nil && *req.DueOn != "" {
-		parsed, err := time.Parse("2006-01-02", *req.DueOn)
-		if err != nil {
-			return nil, NewInvalidArgumentError("invalid due_on format, expected YYYY-MM-DD")
-		}
-		dueOnTime = parsed
-		dueOnValid = true
 	}
 
 	lend := &Lend{
@@ -152,16 +146,24 @@ func (s *Service) CreateLend(ctx context.Context, req CreateLendRequest) (*LendR
 		lend.Note.Valid = true
 	}
 
-	err = s.store.InsertLend(ctx, lend)
-	if err != nil {
+	if insertErr := s.store.InsertLendTx(ctx, tx, lend); insertErr != nil {
+		err = insertErr
 		return nil, err
 	}
 
-	if managementCategoryID == 1 {
-		err = s.store.UpdateAssetStatusInLend(ctx, assetMasterID, 4) // 4: 貸出中
-		if err != nil {
-			return nil, err
-		}
+	if updateLocationErr := s.store.UpdateAssetLocationTx(ctx, tx, assetMasterID, req.BorrowerID); updateLocationErr != nil {
+		err = updateLocationErr
+		return nil, err
+	}
+
+	if reconcileErr := s.store.ReconcileAssetStatusTx(ctx, tx, assetMasterID); reconcileErr != nil {
+		err = reconcileErr
+		return nil, err
+	}
+
+	if commitErr := tx.Commit(); commitErr != nil {
+		err = commitErr
+		return nil, err
 	}
 
 	resp := buildLendResponse(lend, 0)
@@ -193,12 +195,6 @@ func (s *Service) CreateReturn(ctx context.Context, req CreateReturnRequest) (*R
 	}()
 
 	lend, err := GetLendByIDTx(ctx, tx, req.LendID)
-	if err != nil {
-		return nil, err
-	}
-
-	// 貸出に紐づく資産の管理区分IDを取得（貸出中のステータス更新に必要）
-	managementCategoryID, err := s.store.GetManagementCategoryIDByMasterID(ctx, lend.AssetMasterID)
 	if err != nil {
 		return nil, err
 	}
@@ -242,11 +238,20 @@ func (s *Service) CreateReturn(ctx context.Context, req CreateReturnRequest) (*R
 		}
 	}
 
-	if managementCategoryID == 1 {
-		err = s.store.UpdateAssetStatusInReturn(ctx, lend.AssetMasterID, 1) // 1: 正常
+	outstandingQty, err := inventory.GetOutstandingQuantityByMasterID(ctx, tx, lend.AssetMasterID)
+	if err != nil {
+		return nil, err
+	}
+	if outstandingQty == 0 {
+		err = s.store.ResetAssetLocationToDefaultTx(ctx, tx, lend.AssetMasterID)
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	err = s.store.ReconcileAssetStatusTx(ctx, tx, lend.AssetMasterID)
+	if err != nil {
+		return nil, err
 	}
 
 	err = tx.Commit()
@@ -452,4 +457,16 @@ func buildLendResponse(lend *Lend, returnedQty int) LendResponse {
 		resp.Note = &val
 	}
 	return resp
+}
+
+func parseDueOnUTC(raw *string) (time.Time, bool, error) {
+	if raw == nil || *raw == "" {
+		return time.Time{}, false, nil
+	}
+
+	parsed, err := time.ParseInLocation("2006-01-02", *raw, time.UTC)
+	if err != nil {
+		return time.Time{}, false, NewInvalidArgumentError("invalid due_on format, expected YYYY-MM-DD")
+	}
+	return parsed.UTC(), true, nil
 }
