@@ -15,5 +15,5 @@ type AssetGenre struct {
 	GenreID    uint   `gorm:"primaryKey;column:genre_id" json:"id"`
 	GenreName  string `gorm:"column:genre_name"          json:"name"`
 	GenreCode  string `gorm:"column:genre_code"          json:"code"`
-	IsDisabled bool   `gorm:"column:is_disabled"         json:"is_disabled"` // ★変更
+	IsDisabled bool   `gorm:"column:is_disabled"         json:"is_disabled"`
 }

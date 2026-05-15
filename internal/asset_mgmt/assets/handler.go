@@ -2,6 +2,7 @@ package assets
 
 import (
 	"encoding/csv"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -394,18 +395,61 @@ func (h *Handler) HandleImportAssets(c *gin.Context) {
 	c.JSON(http.StatusOK, res)
 }
 
-// @Summary      Search assets by name
-// @Description  Searches for assets where the master name contains the given query string.
+// @Summary      Search assets with combined filters
+// @Description  Searches joined asset master and asset rows with exact, partial, prefix, and range filters.
+// @Description  `q` searches across management number, name, manufacturer, model, and serial.
+// @Description  `management_number`, `asset_id`, `asset_master_id`, `genre_id`, `genre_code`, `management_category_id`, and `status_id` are exact-match filters.
+// @Description  `management_number_prefix` is a prefix filter. Text filters such as `name`, `manufacturer`, `model`, `serial`, `owner`, `default_location`, `location`, `last_checked_by`, and `notes` use partial matches.
+// @Description  `*_to` date filters accept `YYYY-MM-DD` or RFC3339. A date-only `*_to` value is treated as an inclusive day by converting it to the next UTC day internally.
+// @Description  Examples:
+// @Description  - GET /assets/search?management_number=OFS-20250901-0001
+// @Description  - GET /assets/search?genre_id=10&status_id=1
+// @Description  - GET /assets/search?q=ThinkPad
+// @Description  - GET /assets/search?manufacturer=Lenovo&model=X1
+// @Description  - GET /assets/search?created_from=2026-01-01&created_to=2026-03-31
 // @Tags         assets-search
 // @Produce      json
-// @Param        name query string true "Search query for asset name"
+// @Param        q                        query string false "Cross-field partial search on management_number, name, manufacturer, model, and serial"
+// @Param        management_number        query string false "Exact match on management number"
+// @Param        management_number_prefix query string false "Prefix match on management number"
+// @Param        asset_id                 query int    false "Exact match on asset ID"
+// @Param        asset_master_id          query int    false "Exact match on asset master ID"
+// @Param        genre_id                 query int    false "Exact match on genre ID"
+// @Param        genre_code               query string false "Exact match on genre code"
+// @Param        genre_name               query string false "Partial match on genre name"
+// @Param        management_category_id   query int    false "Exact match on management category ID"
+// @Param        name                     query string false "Partial match on asset master name"
+// @Param        manufacturer             query string false "Partial match on manufacturer"
+// @Param        model                    query string false "Partial match on model"
+// @Param        serial                   query string false "Partial match on serial"
+// @Param        status_id                query int    false "Exact match on asset status ID"
+// @Param        owner                    query string false "Partial match on owner"
+// @Param        default_location         query string false "Partial match on default location"
+// @Param        location                 query string false "Partial match on current location"
+// @Param        purchased_from           query string false "Purchased date lower bound (`YYYY-MM-DD` or RFC3339)" Format(date)
+// @Param        purchased_to             query string false "Purchased date upper bound (`YYYY-MM-DD` or RFC3339); date-only values include the entire day" Format(date)
+// @Param        created_from             query string false "Created date lower bound (`YYYY-MM-DD` or RFC3339)" Format(date)
+// @Param        created_to               query string false "Created date upper bound (`YYYY-MM-DD` or RFC3339); date-only values include the entire day" Format(date)
+// @Param        last_checked_from        query string false "Last checked date lower bound (`YYYY-MM-DD` or RFC3339)" Format(date)
+// @Param        last_checked_to          query string false "Last checked date upper bound (`YYYY-MM-DD` or RFC3339); date-only values include the entire day" Format(date)
+// @Param        last_checked_by          query string false "Partial match on last checked by"
+// @Param        quantity_min             query int    false "Minimum quantity"
+// @Param        quantity_max             query int    false "Maximum quantity"
+// @Param        notes                    query string false "Partial match on notes"
 // @Success      200 {array} AssetSetResponse
+// @Failure      400 {object} ErrorResponse "Invalid query parameter"
 // @Failure      500 {object} ErrorResponse "Internal server error"
 // @Router       /assets/search [get]
 func (h *Handler) SearchAssets(c *gin.Context) {
-	nameQuery := c.Query("name") // URLパラメータ ?name=xxx を取得
+	// /assets/search は master と asset を結合して返すため、両方の項目を同時に受け付ける。
+	// 文字列検索は exact/prefix と明示したもの以外を部分一致に寄せ、画面側の検索条件を増やしやすくしている。
+	q, err := buildAssetSearchQuery(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, apiErr(CodeInvalidArgument, err.Error()))
+		return
+	}
 
-	res, err := h.svc.SearchAssetsByName(c.Request.Context(), nameQuery)
+	res, err := h.svc.SearchAssets(c.Request.Context(), q)
 	if err != nil {
 		c.JSON(toHTTPStatus(err), apiErrFrom(err))
 		return
@@ -452,6 +496,131 @@ func atoiDef(s string, d int) int {
 	}
 	return n
 }
+
+func buildAssetSearchQuery(c *gin.Context) (AssetSearchQuery, error) {
+	var q AssetSearchQuery
+
+	q.Q = trimmedQueryValue(c, "q")
+	q.ManagementNumber = trimmedQueryValue(c, "management_number")
+	q.ManagementNumberPrefix = trimmedQueryValue(c, "management_number_prefix")
+	q.GenreCode = trimmedQueryValue(c, "genre_code")
+	q.GenreName = trimmedQueryValue(c, "genre_name")
+	q.Name = trimmedQueryValue(c, "name")
+	q.Manufacturer = trimmedQueryValue(c, "manufacturer")
+	q.Model = trimmedQueryValue(c, "model")
+	q.Serial = trimmedQueryValue(c, "serial")
+	q.Owner = trimmedQueryValue(c, "owner")
+	q.DefaultLocation = trimmedQueryValue(c, "default_location")
+	q.Location = trimmedQueryValue(c, "location")
+	q.LastCheckedBy = trimmedQueryValue(c, "last_checked_by")
+	q.Notes = trimmedQueryValue(c, "notes")
+
+	var err error
+	if q.AssetID, err = parseOptionalUint64Query(c, "asset_id"); err != nil {
+		return AssetSearchQuery{}, err
+	}
+	if q.AssetMasterID, err = parseOptionalUint64Query(c, "asset_master_id"); err != nil {
+		return AssetSearchQuery{}, err
+	}
+	if q.GenreID, err = parseOptionalUintQuery(c, "genre_id"); err != nil {
+		return AssetSearchQuery{}, err
+	}
+	if q.ManagementCategoryID, err = parseOptionalUintQuery(c, "management_category_id"); err != nil {
+		return AssetSearchQuery{}, err
+	}
+	if q.StatusID, err = parseOptionalUintQuery(c, "status_id"); err != nil {
+		return AssetSearchQuery{}, err
+	}
+	if q.QuantityMin, err = parseOptionalUintQuery(c, "quantity_min"); err != nil {
+		return AssetSearchQuery{}, err
+	}
+	if q.QuantityMax, err = parseOptionalUintQuery(c, "quantity_max"); err != nil {
+		return AssetSearchQuery{}, err
+	}
+
+	// *_to は日付のみが渡された場合に「その日を含む上限」として扱えるよう、
+	// 次の UTC 日付へ丸めてから SQL 側で半開区間 (<) にする。
+	if q.PurchasedFrom, err = parseOptionalTimeQuery(c, "purchased_from", false); err != nil {
+		return AssetSearchQuery{}, err
+	}
+	if q.PurchasedTo, err = parseOptionalTimeQuery(c, "purchased_to", true); err != nil {
+		return AssetSearchQuery{}, err
+	}
+	if q.CreatedFrom, err = parseOptionalTimeQuery(c, "created_from", false); err != nil {
+		return AssetSearchQuery{}, err
+	}
+	if q.CreatedTo, err = parseOptionalTimeQuery(c, "created_to", true); err != nil {
+		return AssetSearchQuery{}, err
+	}
+	if q.LastCheckedFrom, err = parseOptionalTimeQuery(c, "last_checked_from", false); err != nil {
+		return AssetSearchQuery{}, err
+	}
+	if q.LastCheckedTo, err = parseOptionalTimeQuery(c, "last_checked_to", true); err != nil {
+		return AssetSearchQuery{}, err
+	}
+
+	return q, nil
+}
+
+func trimmedQueryValue(c *gin.Context, key string) *string {
+	v := strings.TrimSpace(c.Query(key))
+	if v == "" {
+		return nil
+	}
+	return &v
+}
+
+func parseOptionalUint64Query(c *gin.Context, key string) (*uint64, error) {
+	v := strings.TrimSpace(c.Query(key))
+	if v == "" {
+		return nil, nil
+	}
+	n, err := strconv.ParseUint(v, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("%s must be uint64", key)
+	}
+	return &n, nil
+}
+
+func parseOptionalUintQuery(c *gin.Context, key string) (*uint, error) {
+	v := strings.TrimSpace(c.Query(key))
+	if v == "" {
+		return nil, nil
+	}
+	n, err := parseUint(v)
+	if err != nil {
+		return nil, fmt.Errorf("%s must be uint", key)
+	}
+	return &n, nil
+}
+
+func parseOptionalTimeQuery(c *gin.Context, key string, endExclusive bool) (*time.Time, error) {
+	v := strings.TrimSpace(c.Query(key))
+	if v == "" {
+		return nil, nil
+	}
+	t, err := parseSearchTimeQueryValue(key, v, endExclusive)
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+func parseSearchTimeQueryValue(key, value string, endExclusive bool) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339, value); err == nil {
+		return t.UTC(), nil
+	}
+
+	t, err := time.Parse("2006-01-02", value)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("%s must be YYYY-MM-DD or RFC3339", key)
+	}
+	if endExclusive {
+		t = t.AddDate(0, 0, 1)
+	}
+	return t.UTC(), nil
+}
+
 func nextOffset(total int64, p Page) int {
 	n := p.Offset + p.Limit
 	if n >= int(total) {

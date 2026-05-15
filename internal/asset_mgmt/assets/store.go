@@ -730,24 +730,11 @@ func (s *Store) LoadStatusIDSet(ctx context.Context) (map[uint]bool, error) {
 	return m, rows.Err()
 }
 
-// === search assets by name ===
-func (s *Store) SearchAssetsByName(ctx context.Context, nameQuery string) ([]AssetSetResponse, error) {
-	const q = `
-		SELECT
-			m.asset_master_id,
-			m.management_number, m.name, m.management_category_id, m.genre_id, m.manufacturer, m.model, m.created_at,
-			a.asset_id, a.asset_master_id, a.serial, a.quantity, a.purchased_at, a.status_id,
-			a.owner, a.default_location, a.location, a.last_checked_at, a.last_checked_by, a.notes
-		FROM assets_master AS m
-		JOIN assets AS a
-			ON a.asset_master_id = m.asset_master_id
-		WHERE m.name LIKE ? ESCAPE '\\'
-		ORDER BY m.asset_master_id, a.asset_id;
-	`
+// SearchAssets returns joined master + asset rows using a combined filter set.
+func (s *Store) SearchAssets(ctx context.Context, q AssetSearchQuery) ([]AssetSetResponse, error) {
+	query, args := buildSearchAssetsQuery(q)
 
-	pattern := "%" + escapeLike(nameQuery) + "%"
-
-	rows, err := s.db.QueryContext(ctx, q, pattern)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -764,7 +751,6 @@ func (s *Store) SearchAssetsByName(ctx context.Context, nameQuery string) ([]Ass
 		var lastCheckedByNS sql.NullString
 		var notesNS sql.NullString
 
-		// ※ purchased_at が NULL になり得るなら sql.NullTime にする
 		var (
 			masterID           uint64
 			managementNumber   string
@@ -808,6 +794,7 @@ func (s *Store) SearchAssetsByName(ctx context.Context, nameQuery string) ([]Ass
 				AssetID:          assetID,
 				AssetMasterID:    assetMasterID,
 				ManagementNumber: managementNumber,
+				Name:             name,
 				Serial:           ptrString(serialNS),
 				Quantity:         uint(quantity),
 				PurchasedAt:      purchasedAt,
@@ -829,6 +816,138 @@ func (s *Store) SearchAssetsByName(ctx context.Context, nameQuery string) ([]Ass
 	}
 
 	return results, nil
+}
+
+func buildSearchAssetsQuery(q AssetSearchQuery) (string, []any) {
+	const baseSelect = `
+		SELECT
+			m.asset_master_id,
+			m.management_number, m.name, m.management_category_id, m.genre_id, m.manufacturer, m.model, m.created_at,
+			a.asset_id, a.asset_master_id, a.serial, a.quantity, a.purchased_at, a.status_id,
+			a.owner, a.default_location, a.location, a.last_checked_at, a.last_checked_by, a.notes
+		FROM assets_master AS m
+		JOIN assets AS a
+			ON a.asset_master_id = m.asset_master_id
+		LEFT JOIN asset_genres AS g
+			ON g.genre_id = m.genre_id
+	`
+
+	// exact/prefix と明示していない文字列検索は部分一致に寄せ、UI 側で複数条件を組み合わせやすくする。
+	where := []string{"1=1"}
+	args := make([]any, 0, 32)
+
+	if q.Q != nil {
+		pattern := "%" + escapeLike(*q.Q) + "%"
+		where = append(where, `(m.management_number LIKE ? ESCAPE '\' OR m.name LIKE ? ESCAPE '\' OR m.manufacturer LIKE ? ESCAPE '\' OR COALESCE(m.model, '') LIKE ? ESCAPE '\' OR COALESCE(a.serial, '') LIKE ? ESCAPE '\')`)
+		args = append(args, pattern, pattern, pattern, pattern, pattern)
+	}
+	if q.ManagementNumber != nil {
+		where = append(where, "m.management_number = ?")
+		args = append(args, *q.ManagementNumber)
+	}
+	if q.ManagementNumberPrefix != nil {
+		where = append(where, "m.management_number LIKE ? ESCAPE '\\'")
+		args = append(args, escapeLike(*q.ManagementNumberPrefix)+"%")
+	}
+	if q.AssetID != nil {
+		where = append(where, "a.asset_id = ?")
+		args = append(args, *q.AssetID)
+	}
+	if q.AssetMasterID != nil {
+		where = append(where, "a.asset_master_id = ?")
+		args = append(args, *q.AssetMasterID)
+	}
+	if q.GenreID != nil {
+		where = append(where, "m.genre_id = ?")
+		args = append(args, *q.GenreID)
+	}
+	if q.GenreCode != nil {
+		where = append(where, "g.genre_code = ?")
+		args = append(args, *q.GenreCode)
+	}
+	if q.GenreName != nil {
+		where = append(where, "g.genre_name LIKE ? ESCAPE '\\'")
+		args = append(args, "%"+escapeLike(*q.GenreName)+"%")
+	}
+	if q.ManagementCategoryID != nil {
+		where = append(where, "m.management_category_id = ?")
+		args = append(args, *q.ManagementCategoryID)
+	}
+	if q.Name != nil {
+		where = append(where, "m.name LIKE ? ESCAPE '\\'")
+		args = append(args, "%"+escapeLike(*q.Name)+"%")
+	}
+	if q.Manufacturer != nil {
+		where = append(where, "m.manufacturer LIKE ? ESCAPE '\\'")
+		args = append(args, "%"+escapeLike(*q.Manufacturer)+"%")
+	}
+	if q.Model != nil {
+		where = append(where, "COALESCE(m.model, '') LIKE ? ESCAPE '\\'")
+		args = append(args, "%"+escapeLike(*q.Model)+"%")
+	}
+	if q.Serial != nil {
+		where = append(where, "COALESCE(a.serial, '') LIKE ? ESCAPE '\\'")
+		args = append(args, "%"+escapeLike(*q.Serial)+"%")
+	}
+	if q.StatusID != nil {
+		where = append(where, "a.status_id = ?")
+		args = append(args, *q.StatusID)
+	}
+	if q.Owner != nil {
+		where = append(where, "a.owner LIKE ? ESCAPE '\\'")
+		args = append(args, "%"+escapeLike(*q.Owner)+"%")
+	}
+	if q.DefaultLocation != nil {
+		where = append(where, "a.default_location LIKE ? ESCAPE '\\'")
+		args = append(args, "%"+escapeLike(*q.DefaultLocation)+"%")
+	}
+	if q.Location != nil {
+		where = append(where, "COALESCE(a.location, '') LIKE ? ESCAPE '\\'")
+		args = append(args, "%"+escapeLike(*q.Location)+"%")
+	}
+	if q.PurchasedFrom != nil {
+		where = append(where, "a.purchased_at >= ?")
+		args = append(args, *q.PurchasedFrom)
+	}
+	if q.PurchasedTo != nil {
+		where = append(where, "a.purchased_at < ?")
+		args = append(args, *q.PurchasedTo)
+	}
+	if q.CreatedFrom != nil {
+		where = append(where, "m.created_at >= ?")
+		args = append(args, *q.CreatedFrom)
+	}
+	if q.CreatedTo != nil {
+		where = append(where, "m.created_at < ?")
+		args = append(args, *q.CreatedTo)
+	}
+	if q.LastCheckedFrom != nil {
+		where = append(where, "a.last_checked_at >= ?")
+		args = append(args, *q.LastCheckedFrom)
+	}
+	if q.LastCheckedTo != nil {
+		where = append(where, "a.last_checked_at < ?")
+		args = append(args, *q.LastCheckedTo)
+	}
+	if q.LastCheckedBy != nil {
+		where = append(where, "COALESCE(a.last_checked_by, '') LIKE ? ESCAPE '\\'")
+		args = append(args, "%"+escapeLike(*q.LastCheckedBy)+"%")
+	}
+	if q.QuantityMin != nil {
+		where = append(where, "a.quantity >= ?")
+		args = append(args, *q.QuantityMin)
+	}
+	if q.QuantityMax != nil {
+		where = append(where, "a.quantity <= ?")
+		args = append(args, *q.QuantityMax)
+	}
+	if q.Notes != nil {
+		where = append(where, "COALESCE(a.notes, '') LIKE ? ESCAPE '\\'")
+		args = append(args, "%"+escapeLike(*q.Notes)+"%")
+	}
+
+	query := baseSelect + "\n\t\tWHERE " + strings.Join(where, "\n\t\t  AND ") + "\n\t\tORDER BY m.asset_master_id, a.asset_id;"
+	return query, args
 }
 
 // LIKE用のエスケープ（ユーザーが % や _ を入力してもワイルドカードにならないように）

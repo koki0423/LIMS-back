@@ -54,3 +54,10 @@ curl -s "http://localhost:8080/assets?management_number=OFS-20250901-0001&limit=
 curl -s -X PUT http://localhost:8080/assets/1 \
   -H "Content-Type: application/json" \
   -d '{"quantity":7,"location":"HQ-02","last_checked_by":"admin","last_checked_at":"2025-09-07T10:00:00Z"}' | jq
+
+# 検索例（/assets/search は複数条件を組み合わせ可能）
+curl -s "http://localhost:8080/assets/search?management_number=OFS-20250901-0001" | jq
+curl -s "http://localhost:8080/assets/search?genre_id=10&status_id=1" | jq
+curl -s "http://localhost:8080/assets/search?q=ThinkPad" | jq
+curl -s "http://localhost:8080/assets/search?manufacturer=Lenovo&model=X1" | jq
+curl -s "http://localhost:8080/assets/search?created_from=2026-01-01&created_to=2026-03-31" | jq

@@ -514,9 +514,9 @@ func parseAssetSetFromCSVRow(rec []string, col map[string]int) (CreateAssetSetRe
 	return req, nil
 }
 
-// search assets by name
-func (s *Service) SearchAssetsByName(ctx context.Context, nameQuery string) ([]AssetSetResponse, error) {
-	out, err := s.store.SearchAssetsByName(ctx, nameQuery)
+// Search asset master + asset rows with combined filters.
+func (s *Service) SearchAssets(ctx context.Context, q AssetSearchQuery) ([]AssetSetResponse, error) {
+	out, err := s.store.SearchAssets(ctx, q)
 	if err != nil {
 		return nil, err
 	}

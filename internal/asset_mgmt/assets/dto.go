@@ -147,12 +147,31 @@ type Page struct {
 }
 
 type AssetSearchQuery struct {
-	ManagementNumber *string
-	AssetMasterID    *uint64
-	StatusID         *uint
-	Owner            *string
-	Location         *string
-	PurchasedFrom    *time.Time
-	PurchasedTo      *time.Time
-	GenreID          *uint
+	Q                      *string
+	ManagementNumber       *string
+	ManagementNumberPrefix *string
+	AssetID                *uint64
+	AssetMasterID          *uint64
+	GenreID                *uint
+	GenreCode              *string
+	GenreName              *string
+	ManagementCategoryID   *uint
+	Name                   *string
+	Manufacturer           *string
+	Model                  *string
+	Serial                 *string
+	StatusID               *uint
+	Owner                  *string
+	DefaultLocation        *string
+	Location               *string
+	PurchasedFrom          *time.Time
+	PurchasedTo            *time.Time
+	CreatedFrom            *time.Time
+	CreatedTo              *time.Time
+	LastCheckedFrom        *time.Time
+	LastCheckedTo          *time.Time
+	LastCheckedBy          *string
+	QuantityMin            *uint
+	QuantityMax            *uint
+	Notes                  *string
 }
