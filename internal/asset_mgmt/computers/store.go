@@ -160,6 +160,9 @@ func (s *Store) GetComputerPartByAssetMasterID(ctx context.Context, assetMasterI
 		cp.usage_status_id,
 		us.name,
 		us.display_name,
+		pt.part_type_id,
+		pt.name,
+		pt.display_name,
 		cp.spec,
 		cp.note,
 		cp.created_at,
@@ -167,29 +170,23 @@ func (s *Store) GetComputerPartByAssetMasterID(ctx context.Context, assetMasterI
 	FROM computer_parts cp
 	JOIN assets_master am ON am.asset_master_id = cp.asset_master_id
 	JOIN usage_status us ON us.usage_status_id = cp.usage_status_id
+	LEFT JOIN computer_configurations cc ON cc.computer_configuration_id = (
+		SELECT cc2.computer_configuration_id
+		FROM computer_configurations cc2
+		WHERE cc2.part_asset_master_id = cp.asset_master_id
+			AND cc2.removed_at IS NULL
+		ORDER BY cc2.computer_configuration_id DESC
+		LIMIT 1
+	)
+	LEFT JOIN part_types pt ON pt.part_type_id = cc.part_type_id
 	WHERE cp.asset_master_id = ?`
 
-	var out ComputerPartResponse
-	var spec, note sql.NullString
-	if err := s.db.QueryRowContext(ctx, q, assetMasterID).Scan(
-		&out.ComputerPartID,
-		&out.AssetMasterID,
-		&out.ManagementNumber,
-		&out.AssetName,
-		&out.UsageStatusID,
-		&out.UsageStatusName,
-		&out.UsageStatusDisplayName,
-		&spec,
-		&note,
-		&out.CreatedAt,
-		&out.UpdatedAt,
-	); err != nil {
+	row := s.db.QueryRowContext(ctx, q, assetMasterID)
+	item, err := scanComputerPart(row)
+	if err != nil {
 		return nil, err
 	}
-
-	out.Specification = ptrString(spec)
-	out.Note = ptrString(note)
-	return &out, nil
+	return &item, nil
 }
 
 func (s *Store) UpdateComputerPartByAssetMasterID(ctx context.Context, assetMasterID uint64, patch updateComputerPartInput) (*ComputerPartResponse, error) {
@@ -489,6 +486,39 @@ func scanComputerConfiguration(s scanner) (ComputerConfigurationResponse, error)
 	return out, nil
 }
 
+func scanComputerPart(s scanner) (ComputerPartResponse, error) {
+	var out ComputerPartResponse
+	var activePartTypeID sql.NullInt64
+	var activePartTypeName, activePartTypeDisplayName sql.NullString
+	var spec, note sql.NullString
+	err := s.Scan(
+		&out.ComputerPartID,
+		&out.AssetMasterID,
+		&out.ManagementNumber,
+		&out.AssetName,
+		&out.UsageStatusID,
+		&out.UsageStatusName,
+		&out.UsageStatusDisplayName,
+		&activePartTypeID,
+		&activePartTypeName,
+		&activePartTypeDisplayName,
+		&spec,
+		&note,
+		&out.CreatedAt,
+		&out.UpdatedAt,
+	)
+	if err != nil {
+		return ComputerPartResponse{}, err
+	}
+
+	out.ActivePartTypeID = ptrUint(activePartTypeID)
+	out.ActivePartTypeName = ptrString(activePartTypeName)
+	out.ActivePartTypeDisplayName = ptrString(activePartTypeDisplayName)
+	out.Specification = ptrString(spec)
+	out.Note = ptrString(note)
+	return out, nil
+}
+
 func appendNullableStringUpdate(column string, field nullableStringField, sets *[]string, args *[]any) {
 	if !field.Set {
 		return
@@ -518,6 +548,14 @@ func ptrString(ns sql.NullString) *string {
 		return nil
 	}
 	v := ns.String
+	return &v
+}
+
+func ptrUint(ni sql.NullInt64) *uint {
+	if !ni.Valid {
+		return nil
+	}
+	v := uint(ni.Int64)
 	return &v
 }
 

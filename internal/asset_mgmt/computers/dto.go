@@ -70,17 +70,20 @@ type ComputerDetailResponse struct {
 }
 
 type ComputerPartResponse struct {
-	ComputerPartID         uint64    `json:"computer_part_id"`
-	AssetMasterID          uint64    `json:"asset_master_id"`
-	ManagementNumber       string    `json:"management_number"`
-	AssetName              string    `json:"asset_name"`
-	UsageStatusID          uint      `json:"usage_status_id"`
-	UsageStatusName        string    `json:"usage_status_name"`
-	UsageStatusDisplayName string    `json:"usage_status_display_name"`
-	Specification          *string   `json:"spec,omitempty"`
-	Note                   *string   `json:"note,omitempty"`
-	CreatedAt              time.Time `json:"created_at"`
-	UpdatedAt              time.Time `json:"updated_at"`
+	ComputerPartID            uint64    `json:"computer_part_id"`
+	AssetMasterID             uint64    `json:"asset_master_id"`
+	ManagementNumber          string    `json:"management_number"`
+	AssetName                 string    `json:"asset_name"`
+	UsageStatusID             uint      `json:"usage_status_id"`
+	UsageStatusName           string    `json:"usage_status_name"`
+	UsageStatusDisplayName    string    `json:"usage_status_display_name"`
+	ActivePartTypeID          *uint     `json:"active_part_type_id"`
+	ActivePartTypeName        *string   `json:"active_part_type_name"`
+	ActivePartTypeDisplayName *string   `json:"active_part_type_display_name"`
+	Specification             *string   `json:"spec,omitempty"`
+	Note                      *string   `json:"note,omitempty"`
+	CreatedAt                 time.Time `json:"created_at"`
+	UpdatedAt                 time.Time `json:"updated_at"`
 }
 
 type ComputerConfigurationResponse struct {
