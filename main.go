@@ -21,6 +21,7 @@ import (
 	ginSwagger "github.com/swaggo/gin-swagger"
 
 	"IRIS-backend/internal/asset_mgmt/assets"
+	"IRIS-backend/internal/asset_mgmt/computers"
 	"IRIS-backend/internal/asset_mgmt/disposals"
 	"IRIS-backend/internal/asset_mgmt/lend"
 	"IRIS-backend/internal/asset_mgmt/printLabels"
@@ -149,6 +150,7 @@ func registerAPIRoutes(r *gin.Engine, conn *sql.DB, cfg *db.Config) {
 	janClient := assets.NewJANClient(cfg.Yahoo.AppID)
 
 	assets.RegisterRoutes(api, assets.NewService(conn, janClient))
+	computers.RegisterRoutes(api, computers.NewService(conn))
 	lend.RegisterRoutes(api, lend.NewService(conn))
 	disposals.RegisterRoutes(api, disposals.NewService(conn))
 	printLabels.RegisterRoutes(api, printLabels.NewService())
