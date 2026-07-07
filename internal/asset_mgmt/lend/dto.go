@@ -49,14 +49,17 @@ type LendResponse struct {
 
 // 返却レスポンス
 type ReturnResponse struct {
-	ReturnID      int64     `json:"return_id"`
-	ReturnULID    string    `json:"return_ulid"`
-	LendID        int64     `json:"lend_id"`
-	Quantity      int       `json:"quantity"`
-	ProcessedByID *string   `json:"processed_by_id,omitempty"`
-	ReturnedAt    time.Time `json:"returned_at"`
-	Note          *string   `json:"note,omitempty"`
-	// 返却元の貸出情報を一部返したいならここに追加
+	ReturnID         int64      `json:"return_id"`
+	ReturnULID       string     `json:"return_ulid"`
+	LendID           int64      `json:"lend_id"`
+	ManagementNumber *string    `json:"management_number,omitempty"`
+	AssetName        *string    `json:"asset_name,omitempty"`
+	BorrowerID       *string    `json:"borrower_id,omitempty"`
+	LentAt           *time.Time `json:"lent_at,omitempty"`
+	Quantity         int        `json:"quantity"`
+	ProcessedByID    *string    `json:"processed_by_id,omitempty"`
+	ReturnedAt       time.Time  `json:"returned_at"`
+	Note             *string    `json:"note,omitempty"`
 }
 
 // ---- API Specific Responses ----

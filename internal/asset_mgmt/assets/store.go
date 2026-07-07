@@ -838,7 +838,7 @@ func buildSearchAssetsQuery(q AssetSearchQuery) (string, []any) {
 
 	if q.Q != nil {
 		pattern := "%" + escapeLike(*q.Q) + "%"
-		where = append(where, `(m.management_number LIKE ? ESCAPE '\' OR m.name LIKE ? ESCAPE '\' OR m.manufacturer LIKE ? ESCAPE '\' OR COALESCE(m.model, '') LIKE ? ESCAPE '\' OR COALESCE(a.serial, '') LIKE ? ESCAPE '\')`)
+		where = append(where, `(m.management_number LIKE ? ESCAPE '\\' OR m.name LIKE ? ESCAPE '\\' OR m.manufacturer LIKE ? ESCAPE '\\' OR COALESCE(m.model, '') LIKE ? ESCAPE '\\' OR COALESCE(a.serial, '') LIKE ? ESCAPE '\\')`)
 		args = append(args, pattern, pattern, pattern, pattern, pattern)
 	}
 	if q.ManagementNumber != nil {
@@ -846,7 +846,7 @@ func buildSearchAssetsQuery(q AssetSearchQuery) (string, []any) {
 		args = append(args, *q.ManagementNumber)
 	}
 	if q.ManagementNumberPrefix != nil {
-		where = append(where, "m.management_number LIKE ? ESCAPE '\\'")
+		where = append(where, "m.management_number LIKE ? ESCAPE '\\\\'")
 		args = append(args, escapeLike(*q.ManagementNumberPrefix)+"%")
 	}
 	if q.AssetID != nil {
@@ -866,7 +866,7 @@ func buildSearchAssetsQuery(q AssetSearchQuery) (string, []any) {
 		args = append(args, *q.GenreCode)
 	}
 	if q.GenreName != nil {
-		where = append(where, "g.genre_name LIKE ? ESCAPE '\\'")
+		where = append(where, "g.genre_name LIKE ? ESCAPE '\\\\'")
 		args = append(args, "%"+escapeLike(*q.GenreName)+"%")
 	}
 	if q.ManagementCategoryID != nil {
@@ -874,19 +874,19 @@ func buildSearchAssetsQuery(q AssetSearchQuery) (string, []any) {
 		args = append(args, *q.ManagementCategoryID)
 	}
 	if q.Name != nil {
-		where = append(where, "m.name LIKE ? ESCAPE '\\'")
+		where = append(where, "m.name LIKE ? ESCAPE '\\\\'")
 		args = append(args, "%"+escapeLike(*q.Name)+"%")
 	}
 	if q.Manufacturer != nil {
-		where = append(where, "m.manufacturer LIKE ? ESCAPE '\\'")
+		where = append(where, "m.manufacturer LIKE ? ESCAPE '\\\\'")
 		args = append(args, "%"+escapeLike(*q.Manufacturer)+"%")
 	}
 	if q.Model != nil {
-		where = append(where, "COALESCE(m.model, '') LIKE ? ESCAPE '\\'")
+		where = append(where, "COALESCE(m.model, '') LIKE ? ESCAPE '\\\\'")
 		args = append(args, "%"+escapeLike(*q.Model)+"%")
 	}
 	if q.Serial != nil {
-		where = append(where, "COALESCE(a.serial, '') LIKE ? ESCAPE '\\'")
+		where = append(where, "COALESCE(a.serial, '') LIKE ? ESCAPE '\\\\'")
 		args = append(args, "%"+escapeLike(*q.Serial)+"%")
 	}
 	if q.StatusID != nil {
@@ -894,15 +894,15 @@ func buildSearchAssetsQuery(q AssetSearchQuery) (string, []any) {
 		args = append(args, *q.StatusID)
 	}
 	if q.Owner != nil {
-		where = append(where, "a.owner LIKE ? ESCAPE '\\'")
+		where = append(where, "a.owner LIKE ? ESCAPE '\\\\'")
 		args = append(args, "%"+escapeLike(*q.Owner)+"%")
 	}
 	if q.DefaultLocation != nil {
-		where = append(where, "a.default_location LIKE ? ESCAPE '\\'")
+		where = append(where, "a.default_location LIKE ? ESCAPE '\\\\'")
 		args = append(args, "%"+escapeLike(*q.DefaultLocation)+"%")
 	}
 	if q.Location != nil {
-		where = append(where, "COALESCE(a.location, '') LIKE ? ESCAPE '\\'")
+		where = append(where, "COALESCE(a.location, '') LIKE ? ESCAPE '\\\\'")
 		args = append(args, "%"+escapeLike(*q.Location)+"%")
 	}
 	if q.PurchasedFrom != nil {
@@ -930,7 +930,7 @@ func buildSearchAssetsQuery(q AssetSearchQuery) (string, []any) {
 		args = append(args, *q.LastCheckedTo)
 	}
 	if q.LastCheckedBy != nil {
-		where = append(where, "COALESCE(a.last_checked_by, '') LIKE ? ESCAPE '\\'")
+		where = append(where, "COALESCE(a.last_checked_by, '') LIKE ? ESCAPE '\\\\'")
 		args = append(args, "%"+escapeLike(*q.LastCheckedBy)+"%")
 	}
 	if q.QuantityMin != nil {
@@ -942,7 +942,7 @@ func buildSearchAssetsQuery(q AssetSearchQuery) (string, []any) {
 		args = append(args, *q.QuantityMax)
 	}
 	if q.Notes != nil {
-		where = append(where, "COALESCE(a.notes, '') LIKE ? ESCAPE '\\'")
+		where = append(where, "COALESCE(a.notes, '') LIKE ? ESCAPE '\\\\'")
 		args = append(args, "%"+escapeLike(*q.Notes)+"%")
 	}
 

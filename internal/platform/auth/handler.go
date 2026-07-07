@@ -10,12 +10,21 @@ import (
 
 type AuthHandler struct{ svc AuthService }
 
-func RegisterRoutes(r gin.IRoutes, svc AuthService) {
+func RegisterPublicRoutes(r gin.IRoutes, svc AuthService) {
 	h := &AuthHandler{svc: svc}
-	r.POST("/login", h.Login)       // 既存 :contentReference[oaicite:4]{index=4}
-	r.POST("/register", h.Register) // 追加
+	r.POST("/login", h.Login)
+}
+
+func RegisterAuthenticatedRoutes(r gin.IRoutes, svc AuthService) {
+	h := &AuthHandler{svc: svc}
+	r.GET("/me", h.Me)
+}
+
+func RegisterAdminRoutes(r gin.IRoutes, svc AuthService) {
+	h := &AuthHandler{svc: svc}
+	r.POST("/register", h.Register)
 	r.DELETE("/accounts/:id", h.DeleteAccount)
-	r.PATCH("/accounts/:id", h.ChangeUsername) // “ユーザー名変更” = id変更
+	r.PATCH("/accounts/:id", h.ChangeUsername)
 }
 
 // ===== API Responses for Swagger =====
@@ -29,6 +38,12 @@ type TokenResponse struct {
 // MessageResponse represents a generic success message.
 type MessageResponse struct {
 	Message string `json:"message" example:"success"`
+}
+
+type MeResponse struct {
+	UserID       string   `json:"user_id" example:"sys-super-admin"`
+	Roles        []string `json:"roles" example:"super_admin"`
+	Capabilities []string `json:"capabilities" example:"assets.admin"`
 }
 
 // ErrorResponse represents an error response.
@@ -82,11 +97,30 @@ type RegisterRequest struct {
 /*
 テスト用ユーザー
 {
-    "id":"sys-admin",
+    "id":"sys-computer-admin",
     "password":"4mH36",
-    "role":"admin"
+    "role":"computer_admin"
 }
+	sys-super-admin / 4mH36
 */
+
+// @Summary      Get current authenticated user
+// @Description  Returns the authenticated account roles and capabilities.
+// @Tags         auth
+// @Produce      json
+// @Success      200 {object} MeResponse
+// @Failure      401 {object} ErrorResponse "Unauthorized"
+// @Security     BearerAuth
+// @Router       /me [get]
+func (h *AuthHandler) Me(c *gin.Context) {
+	principal, ok := GetPrincipal(c)
+	if !ok {
+		httpx.WriteError(c, http.StatusUnauthorized, "UNAUTHORIZED", "Unauthorized")
+		return
+	}
+
+	c.JSON(http.StatusOK, principal)
+}
 
 // @Summary      Register a new user
 // @Description  Registers a new account.
@@ -114,6 +148,10 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	if err := h.svc.Register(c.Request.Context(), req.ID, req.Password, role); err != nil {
 		if err == ErrAlreadyExists {
 			httpx.WriteError(c, http.StatusConflict, "CONFLICT", "ID already exists")
+			return
+		}
+		if err == ErrInvalidRole {
+			httpx.WriteError(c, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid role")
 			return
 		}
 		httpx.WriteError(c, http.StatusInternalServerError, "INTERNAL", "register failed")

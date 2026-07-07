@@ -299,9 +299,12 @@ func (s *Store) InsertReturn(ctx context.Context, ret *Return) error {
 // 返却1件取得
 func (s *Store) GetReturnByID(ctx context.Context, returnID int64) (*Return, error) {
 	query := `
-	SELECT return_id, return_ulid, lend_id, quantity, processed_by_id, returned_at, note
-	FROM returns
-	WHERE return_id = ?
+	SELECT r.return_id, r.return_ulid, r.lend_id, l.management_number, am.name,
+		l.borrower_id, l.lent_at, r.quantity, r.processed_by_id, r.returned_at, r.note
+	FROM returns r
+	JOIN lends l ON r.lend_id = l.lend_id
+	LEFT JOIN assets_master am ON l.asset_master_id = am.asset_master_id
+	WHERE r.return_id = ?
 	`
 	row := s.db.QueryRowContext(ctx, query, returnID)
 	var ret Return
@@ -309,6 +312,10 @@ func (s *Store) GetReturnByID(ctx context.Context, returnID int64) (*Return, err
 		&ret.ReturnID,
 		&ret.ReturnULID,
 		&ret.LendID,
+		&ret.ManagementNumber,
+		&ret.AssetName,
+		&ret.BorrowerID,
+		&ret.LentAt,
 		&ret.Quantity,
 		&ret.ProcessedByID,
 		&ret.ReturnedAt,
@@ -326,10 +333,12 @@ func (s *Store) GetReturnByID(ctx context.Context, returnID int64) (*Return, err
 // ULIDで返却1件取得
 func (s *Store) GetReturnByULID(ctx context.Context, returnULID string) (*Return, error) {
 	query := `
-	SELECT return_id, return_ulid, lend_id, quantity,
-		processed_by_id, returned_at, note
-	FROM returns
-	WHERE return_ulid = ?
+	SELECT r.return_id, r.return_ulid, r.lend_id, l.management_number, am.name,
+		l.borrower_id, l.lent_at, r.quantity, r.processed_by_id, r.returned_at, r.note
+	FROM returns r
+	JOIN lends l ON r.lend_id = l.lend_id
+	LEFT JOIN assets_master am ON l.asset_master_id = am.asset_master_id
+	WHERE r.return_ulid = ?
 	LIMIT 1
 `
 	row := s.db.QueryRowContext(ctx, query, returnULID)
@@ -339,6 +348,10 @@ func (s *Store) GetReturnByULID(ctx context.Context, returnULID string) (*Return
 		&ret.ReturnID,
 		&ret.ReturnULID,
 		&ret.LendID,
+		&ret.ManagementNumber,
+		&ret.AssetName,
+		&ret.BorrowerID,
+		&ret.LentAt,
 		&ret.Quantity,
 		&ret.ProcessedByID,
 		&ret.ReturnedAt,
@@ -357,10 +370,11 @@ func (s *Store) GetReturnByULID(ctx context.Context, returnULID string) (*Return
 func (s *Store) ListReturns(ctx context.Context, filter ReturnFilter) ([]*Return, error) {
 	// lends テーブルと JOIN して borrower_id / asset_master_id で絞れるようにする
 	query := `
-	SELECT r.return_id, r.return_ulid, r.lend_id, r.quantity,
-		r.processed_by_id, r.returned_at, r.note
+	SELECT r.return_id, r.return_ulid, r.lend_id, l.management_number, am.name,
+		l.borrower_id, l.lent_at, r.quantity, r.processed_by_id, r.returned_at, r.note
 	FROM returns r
 	JOIN lends l ON r.lend_id = l.lend_id
+	LEFT JOIN assets_master am ON l.asset_master_id = am.asset_master_id
 	WHERE 1 = 1
 	`
 	conds := []string{}
@@ -404,6 +418,10 @@ func (s *Store) ListReturns(ctx context.Context, filter ReturnFilter) ([]*Return
 			&ret.ReturnID,
 			&ret.ReturnULID,
 			&ret.LendID,
+			&ret.ManagementNumber,
+			&ret.AssetName,
+			&ret.BorrowerID,
+			&ret.LentAt,
 			&ret.Quantity,
 			&ret.ProcessedByID,
 			&ret.ReturnedAt,

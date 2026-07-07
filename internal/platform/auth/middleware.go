@@ -11,12 +11,13 @@ import (
 )
 
 const (
-	CtxUserIDKey = "user_id"
-	CtxRoleKey   = "role"
+	CtxUserIDKey    = "user_id"
+	CtxRoleKey      = "role"
+	CtxPrincipalKey = "principal"
 )
 
 // RequireAuth: Authorization: Bearer <token> を検証して context に sub/role を詰める
-func RequireAuth(secret []byte) gin.HandlerFunc {
+func RequireAuth(secret []byte, resolver AuthService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		h := c.GetHeader("Authorization")
 		if h == "" {
@@ -65,19 +66,36 @@ func RequireAuth(secret []byte) gin.HandlerFunc {
 			return
 		}
 
-		role := ""
-		roleAny, hasRole := claims["role"]
-		if hasRole {
-			roleStr, ok := roleAny.(string)
-			if ok {
-				role = roleStr
-			}
+		principal, err := resolver.GetPrincipal(c.Request.Context(), sub)
+		if err != nil || principal == nil {
+			httpx.AbortError(c, http.StatusUnauthorized, "UNAUTHORIZED", "account not found")
+			return
 		}
 
+		role := ""
+		if len(principal.Roles) > 0 {
+			role = principal.Roles[0]
+		}
+
+		c.Set(CtxPrincipalKey, principal)
 		c.Set(CtxUserIDKey, sub)
 		c.Set(CtxRoleKey, role)
 		c.Next()
 	}
+}
+
+func GetPrincipal(c *gin.Context) (*Principal, bool) {
+	value, ok := c.Get(CtxPrincipalKey)
+	if !ok {
+		return nil, false
+	}
+
+	principal, ok := value.(*Principal)
+	if !ok || principal == nil {
+		return nil, false
+	}
+
+	return principal, true
 }
 
 // RequireRole: 例) admin のみ許可したい時に追加
@@ -105,6 +123,22 @@ func RequireRole(roles ...string) gin.HandlerFunc {
 
 		_, allowed := roleSet[role]
 		if !allowed {
+			httpx.AbortError(c, http.StatusForbidden, "FORBIDDEN", "forbidden")
+			return
+		}
+
+		c.Next()
+	}
+}
+
+func RequireCapability(capability string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		principal, ok := GetPrincipal(c)
+		if !ok {
+			httpx.AbortError(c, http.StatusForbidden, "FORBIDDEN", "missing principal")
+			return
+		}
+		if !principal.HasCapability(capability) {
 			httpx.AbortError(c, http.StatusForbidden, "FORBIDDEN", "forbidden")
 			return
 		}
