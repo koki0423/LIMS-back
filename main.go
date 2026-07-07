@@ -148,19 +148,30 @@ func registerAPIRoutes(r *gin.Engine, conn *sql.DB, cfg *db.Config) {
 	api := r.Group("/api/v2")
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 	janClient := assets.NewJANClient(cfg.Yahoo.AppID)
+	authService := auth.NewService(conn)
 
 	assets.RegisterRoutes(api, assets.NewService(conn, janClient))
-	computers.RegisterRoutes(api, computers.NewService(conn))
 	lend.RegisterRoutes(api, lend.NewService(conn))
 	disposals.RegisterRoutes(api, disposals.NewService(conn))
 	printLabels.RegisterRoutes(api, printLabels.NewService())
 	dbmng.RegisterRoutes(api, dbmng.NewService(conn))
-	auth.RegisterRoutes(api, auth.NewService(conn))
+	auth.RegisterPublicRoutes(api, authService)
+
+	authenticated := api.Group("")
+	authenticated.Use(auth.RequireAuth(auth.JWTSecret(), authService))
+	auth.RegisterAuthenticatedRoutes(authenticated, authService)
+
+	computerAdmin := authenticated.Group("")
+	computerAdmin.Use(auth.RequireCapability(auth.CapabilityComputersAdmin))
+	computers.RegisterRoutes(computerAdmin, computers.NewService(conn))
+
+	assetAdmin := authenticated.Group("")
+	assetAdmin.Use(auth.RequireCapability(auth.CapabilityAssetsAdmin))
+	auth.RegisterAdminRoutes(assetAdmin, authService)
 
 	// 管理者用グループ
-	admin := api.Group("/admin")
-	admin.Use(auth.RequireAuth(auth.JWTSecret()))
-	admin.Use(auth.RequireRole("admin"))
+	admin := authenticated.Group("/admin")
+	admin.Use(auth.RequireCapability(auth.CapabilityAssetsAdmin))
 	// @Summary Ping server with authentication
 	// @Description get server health status (requires admin role)
 	// @Tags health,admin
