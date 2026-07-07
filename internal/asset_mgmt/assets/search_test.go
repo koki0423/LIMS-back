@@ -74,37 +74,40 @@ func TestBuildSearchAssetsQueryUsesCombinedFilters(t *testing.T) {
 	requiredFragments := []string{
 		"LEFT JOIN asset_genres AS g",
 		"m.management_number = ?",
-		"m.management_number LIKE ? ESCAPE '\\'",
+		"m.management_number LIKE ? ESCAPE '\\\\'",
 		"a.asset_id = ?",
 		"a.asset_master_id = ?",
 		"m.genre_id = ?",
 		"g.genre_code = ?",
-		"g.genre_name LIKE ? ESCAPE '\\'",
+		"g.genre_name LIKE ? ESCAPE '\\\\'",
 		"m.management_category_id = ?",
-		"m.name LIKE ? ESCAPE '\\'",
-		"m.manufacturer LIKE ? ESCAPE '\\'",
-		"COALESCE(m.model, '') LIKE ? ESCAPE '\\'",
-		"COALESCE(a.serial, '') LIKE ? ESCAPE '\\'",
+		"m.name LIKE ? ESCAPE '\\\\'",
+		"m.manufacturer LIKE ? ESCAPE '\\\\'",
+		"COALESCE(m.model, '') LIKE ? ESCAPE '\\\\'",
+		"COALESCE(a.serial, '') LIKE ? ESCAPE '\\\\'",
 		"a.status_id = ?",
-		"a.owner LIKE ? ESCAPE '\\'",
-		"a.default_location LIKE ? ESCAPE '\\'",
-		"COALESCE(a.location, '') LIKE ? ESCAPE '\\'",
+		"a.owner LIKE ? ESCAPE '\\\\'",
+		"a.default_location LIKE ? ESCAPE '\\\\'",
+		"COALESCE(a.location, '') LIKE ? ESCAPE '\\\\'",
 		"a.purchased_at >= ?",
 		"a.purchased_at < ?",
 		"m.created_at >= ?",
 		"m.created_at < ?",
 		"a.last_checked_at >= ?",
 		"a.last_checked_at < ?",
-		"COALESCE(a.last_checked_by, '') LIKE ? ESCAPE '\\'",
+		"COALESCE(a.last_checked_by, '') LIKE ? ESCAPE '\\\\'",
 		"a.quantity >= ?",
 		"a.quantity <= ?",
-		"COALESCE(a.notes, '') LIKE ? ESCAPE '\\'",
+		"COALESCE(a.notes, '') LIKE ? ESCAPE '\\\\'",
 		"ORDER BY m.asset_master_id, a.asset_id",
 	}
 	for _, fragment := range requiredFragments {
 		if !strings.Contains(query, fragment) {
 			t.Fatalf("expected query to contain %q, got:\n%s", fragment, query)
 		}
+	}
+	if strings.Contains(query, "ESCAPE '\\'") {
+		t.Fatalf("query contains invalid escape literal: %s", query)
 	}
 
 	if len(args) != 31 {
