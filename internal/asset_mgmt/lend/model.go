@@ -22,13 +22,17 @@ type Lend struct {
 
 // Return は returns テーブルの1行を表す
 type Return struct {
-	ReturnID      int64
-	ReturnULID    string
-	LendID        int64
-	Quantity      int
-	ProcessedByID sql.NullString
-	ReturnedAt    time.Time
-	Note          sql.NullString
+	ReturnID         int64
+	ReturnULID       string
+	LendID           int64
+	ManagementNumber sql.NullString
+	AssetName        sql.NullString
+	BorrowerID       sql.NullString
+	LentAt           sql.NullTime
+	Quantity         int
+	ProcessedByID    sql.NullString
+	ReturnedAt       time.Time
+	Note             sql.NullString
 }
 
 // 貸出リスト取得用の検索条件

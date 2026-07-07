@@ -259,23 +259,16 @@ func (s *Service) CreateReturn(ctx context.Context, req CreateReturnRequest) (*R
 		return nil, err
 	}
 
-	resp := ReturnResponse{
-		ReturnID:   ret.ReturnID,
-		ReturnULID: ret.ReturnULID,
-		LendID:     ret.LendID,
-		Quantity:   ret.Quantity,
+	ret.ManagementNumber = lend.ManagementNumber
+	ret.BorrowerID = sql.NullString{
+		String: lend.BorrowerID,
+		Valid:  lend.BorrowerID != "",
 	}
-
-	if ret.ProcessedByID.Valid {
-		val := ret.ProcessedByID.String
-		resp.ProcessedByID = &val
+	ret.LentAt = sql.NullTime{
+		Time:  lend.LentAt,
+		Valid: true,
 	}
-	resp.ReturnedAt = ret.ReturnedAt
-	if ret.Note.Valid {
-		val := ret.Note.String
-		resp.Note = &val
-	}
-
+	resp := buildReturnResponse(ret)
 	return &resp, nil
 }
 
@@ -343,21 +336,7 @@ func (s *Service) GetReturn(ctx context.Context, returnID int64) (*ReturnRespons
 		return nil, err
 	}
 
-	resp := ReturnResponse{
-		ReturnID:   ret.ReturnID,
-		ReturnULID: ret.ReturnULID,
-		LendID:     ret.LendID,
-		Quantity:   ret.Quantity,
-	}
-	if ret.ProcessedByID.Valid {
-		val := ret.ProcessedByID.String
-		resp.ProcessedByID = &val
-	}
-	resp.ReturnedAt = ret.ReturnedAt
-	if ret.Note.Valid {
-		val := ret.Note.String
-		resp.Note = &val
-	}
+	resp := buildReturnResponse(ret)
 	return &resp, nil
 }
 
@@ -378,23 +357,7 @@ func (s *Service) GetReturnByKey(ctx context.Context, key string) (*ReturnRespon
 		return nil, err
 	}
 
-	resp := ReturnResponse{
-		ReturnID:   ret.ReturnID,
-		ReturnULID: ret.ReturnULID,
-		LendID:     ret.LendID,
-		Quantity:   ret.Quantity,
-	}
-
-	if ret.ProcessedByID.Valid {
-		v := ret.ProcessedByID.String
-		resp.ProcessedByID = &v
-	}
-	resp.ReturnedAt = ret.ReturnedAt
-	if ret.Note.Valid {
-		v := ret.Note.String
-		resp.Note = &v
-	}
-
+	resp := buildReturnResponse(ret)
 	return &resp, nil
 }
 
@@ -407,22 +370,7 @@ func (s *Service) ListReturns(ctx context.Context, filter ReturnFilter) ([]Retur
 
 	var result []ReturnResponse
 	for _, ret := range returns {
-		resp := ReturnResponse{
-			ReturnID:   ret.ReturnID,
-			ReturnULID: ret.ReturnULID,
-			LendID:     ret.LendID,
-			Quantity:   ret.Quantity,
-		}
-		if ret.ProcessedByID.Valid {
-			val := ret.ProcessedByID.String
-			resp.ProcessedByID = &val
-		}
-		resp.ReturnedAt = ret.ReturnedAt
-		if ret.Note.Valid {
-			val := ret.Note.String
-			resp.Note = &val
-		}
-		result = append(result, resp)
+		result = append(result, buildReturnResponse(ret))
 	}
 	return result, nil
 }
@@ -456,6 +404,43 @@ func buildLendResponse(lend *Lend, returnedQty int) LendResponse {
 		val := lend.Note.String
 		resp.Note = &val
 	}
+	return resp
+}
+
+func buildReturnResponse(ret *Return) ReturnResponse {
+	resp := ReturnResponse{
+		ReturnID:   ret.ReturnID,
+		ReturnULID: ret.ReturnULID,
+		LendID:     ret.LendID,
+		Quantity:   ret.Quantity,
+		ReturnedAt: ret.ReturnedAt,
+	}
+
+	if ret.ManagementNumber.Valid {
+		val := ret.ManagementNumber.String
+		resp.ManagementNumber = &val
+	}
+	if ret.AssetName.Valid {
+		val := ret.AssetName.String
+		resp.AssetName = &val
+	}
+	if ret.BorrowerID.Valid {
+		val := ret.BorrowerID.String
+		resp.BorrowerID = &val
+	}
+	if ret.LentAt.Valid {
+		val := ret.LentAt.Time
+		resp.LentAt = &val
+	}
+	if ret.ProcessedByID.Valid {
+		val := ret.ProcessedByID.String
+		resp.ProcessedByID = &val
+	}
+	if ret.Note.Valid {
+		val := ret.Note.String
+		resp.Note = &val
+	}
+
 	return resp
 }
 
