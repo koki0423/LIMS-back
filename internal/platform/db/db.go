@@ -33,6 +33,12 @@ type YahooConfig struct {
 	AppID string `yaml:"app_id"`
 }
 
+type FrontendConfig struct {
+	Mode      string `yaml:"mode"`
+	DistDir   string `yaml:"dist_dir"`
+	IndexFile string `yaml:"index_file"`
+}
+
 type Config struct {
 	Version     string         `yaml:"version"`
 	Mode        string         `yaml:"mode"`
@@ -40,6 +46,7 @@ type Config struct {
 	DB          DatabaseConfig `yaml:"database"`
 	Certificate Certs          `yaml:"certificate"`
 	Yahoo       YahooConfig    `yaml:"yahoo"`
+	Frontend    FrontendConfig `yaml:"frontend"`
 }
 
 // LoadConfig はYAMLファイルを読み込みますが、ファイルが存在しない場合は環境変数を使用します
@@ -81,6 +88,11 @@ func loadFromEnv() *Config {
 		},
 		Yahoo: YahooConfig{
 			AppID: getEnv("YAHOO_APP_ID", ""),
+		},
+		Frontend: FrontendConfig{
+			Mode:      getEnv("FRONTEND_MODE", "external"),
+			DistDir:   getEnv("FRONTEND_DIST_DIR", ""),
+			IndexFile: getEnv("FRONTEND_INDEX_FILE", "index.html"),
 		},
 	}
 }

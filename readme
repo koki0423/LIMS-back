@@ -8,7 +8,7 @@ export DB_DSN="devadmin:X$Q9zB2Wb2x2@tcp(192.168.0.61:3306)/assetdb?parseTime=tr
 mysql -u root -p assetdb < quick.sql
 
 # 起動
-go run ./cmd/api
+go run ./cmd/server
 
 # 動作確認は cURL を実行
 
@@ -61,3 +61,15 @@ curl -s "http://localhost:8080/assets/search?genre_id=10&status_id=1" | jq
 curl -s "http://localhost:8080/assets/search?q=ThinkPad" | jq
 curl -s "http://localhost:8080/assets/search?manufacturer=Lenovo&model=X1" | jq
 curl -s "http://localhost:8080/assets/search?created_from=2026-01-01&created_to=2026-03-31" | jq
+
+# フロント配信モード
+# external: 既存どおりフロントは別オリジンで配信し、backend は API のみ配信する
+# gin: Gin が frontend.dist_dir 配下の静的ファイルを配信し、非 API パスは frontend.index_file へフォールバックする
+
+# config/config.yaml 例
+frontend:
+  mode: "external"
+  dist_dir: "../frontend/dist"
+  index_file: "index.html"
+
+# gin モードを使う場合は、起動前に frontend.dist_dir と index_file が実在している必要がある

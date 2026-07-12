@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"context"
@@ -15,8 +15,6 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	_ "github.com/go-sql-driver/mysql"
-
-	_ "IRIS-backend/docs"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 
@@ -37,50 +35,34 @@ const (
 	modeRelease = "release"
 )
 
-// @title           LIMS-back API
-// @version         2.0
-// @description     This is the API server for the LIMS backend.
-// @termsOfService  http://swagger.io/terms/
-//
-// @contact.name   API Support
-// @contact.url    http://www.swagger.io/support
-// @contact.email  support@swagger.io
-//
-// @license.name  Apache 2.0
-// @license.url   http://www.apache.org/licenses/LICENSE-2.0.html
-//
-// @host      localhost:8443
-// @BasePath  /api/v2
-//
-// @securityDefinitions.apikey BearerAuth
-// @in header
-// @name Authorization
-//
-// main はアプリケーションのエントリーポイントです。
-// Swagger のドキュメンテーションを生成するために、`swag init` コマンドを実行してください。
-func main() {
-	cfg, err := db.LoadConfig("config/config.yaml")
+func Run(configPath string) error {
+	cfg, err := db.LoadConfig(configPath)
 	if err != nil {
-		log.Fatalf("[FATAL] failed to load config: %v", err)
+		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	if cfg.Mode != modeDev && cfg.Mode != modeRelease {
-		fmt.Println("Usage: go run main.go [dev|release]")
-		return
+	if err := validateAppMode(cfg.Mode); err != nil {
+		return fmt.Errorf("invalid configuration: %w", err)
 	}
 	log.Printf("[INFO] mode: %s\n", cfg.Mode)
 
+	frontendAssets, err := resolveFrontendAssets(cfg)
+	if err != nil {
+		return fmt.Errorf("invalid frontend configuration: %w", err)
+	}
+	log.Printf("[INFO] frontend mode: %s\n", normalizedFrontendMode(cfg.Frontend.Mode))
+	if frontendAssets != nil {
+		log.Printf("[INFO] serving frontend from: %s", frontendAssets.DistDir)
+	}
+
 	conn, err := db.Connect(cfg.DB)
 	if err != nil {
-		log.Fatalf("[FATAL] failed to connect DB: %v", err)
+		return fmt.Errorf("failed to connect DB: %w", err)
 	}
 	defer conn.Close()
 	log.Printf("[INFO] connected to DB: %s", cfg.DB.DBName)
 
-	// Gin ルータ生成（ファイルシステム渡しが不要に）
-	router := newRouter(cfg.Mode, conn, cfg)
-
-	// HTTP サーバ生成
+	router := newRouter(cfg.Mode, conn, cfg, frontendAssets)
 	srv := &http.Server{
 		Addr:    addrListen,
 		Handler: router,
@@ -88,41 +70,30 @@ func main() {
 
 	certFile, keyFile, err := resolveServerTLS(cfg)
 	if err != nil {
-		log.Fatalf("[FATAL] failed to resolve TLS configuration: %v", err)
+		return fmt.Errorf("failed to resolve TLS configuration: %w", err)
 	}
 
-	// サーバ起動
 	go runServer(srv, certFile, keyFile)
-
-	// Graceful shutdown
 	gracefulShutdown(srv, 10*time.Second)
+
+	return nil
 }
 
-// --- 初期化系 ---
-
-func newRouter(mode string, conn *sql.DB, cfg *db.Config) *gin.Engine {
+func newRouter(mode string, conn *sql.DB, cfg *db.Config, frontendAssets *frontendAssets) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())
 	_ = r.SetTrustedProxies(nil)
 
-	if mode == modeDev {
+	if shouldEnableDevCORS(mode, cfg.Frontend.Mode) {
 		r.Use(devCORS())
 	}
 
-	// ヘルスチェック
-	// @Summary Ping server
-	// @Description get server health status
-	// @Tags health
-	// @Accept  json
-	// @Produce  plain
-	// @Success 200 {string} string "ok"
-	// @Router /ping [get]
 	r.GET("/ping", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
 
-	// API ルート登録
 	registerAPIRoutes(r, conn, cfg)
+	registerFrontendRoutes(r, frontendAssets)
 
 	return r
 }
@@ -141,8 +112,6 @@ func devCORS() gin.HandlerFunc {
 		AllowCredentials: true,
 	})
 }
-
-// --- ルーティング ---
 
 func registerAPIRoutes(r *gin.Engine, conn *sql.DB, cfg *db.Config) {
 	api := r.Group("/api/v2")
@@ -169,21 +138,10 @@ func registerAPIRoutes(r *gin.Engine, conn *sql.DB, cfg *db.Config) {
 	assetAdmin.Use(auth.RequireCapability(auth.CapabilityAssetsAdmin))
 	auth.RegisterAdminRoutes(assetAdmin, authService)
 
-	// 管理者用グループ
 	admin := authenticated.Group("/admin")
 	admin.Use(auth.RequireCapability(auth.CapabilityAssetsAdmin))
-	// @Summary Ping server with authentication
-	// @Description get server health status (requires admin role)
-	// @Tags health,admin
-	// @Accept  json
-	// @Produce  plain
-	// @Success 200 {string} string "ok"
-	// @Security BearerAuth
-	// @Router /admin/auth-ping [get]
 	admin.GET("/auth-ping", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
 }
-
-// --- TLS / サーバ起動 ---
 
 func resolveServerTLS(cfg *db.Config) (string, string, error) {
 	if !cfg.TLS {
@@ -228,8 +186,6 @@ func runServer(srv *http.Server, certFile, keyFile string) {
 		log.Fatalf("[FATAL] ListenAndServeTLS: %v", err)
 	}
 }
-
-// --- Graceful shutdown ---
 
 func gracefulShutdown(srv *http.Server, timeout time.Duration) {
 	quit := make(chan os.Signal, 1)
