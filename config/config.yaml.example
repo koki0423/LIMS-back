@@ -14,6 +14,5 @@ yahoo:
   app_id: "<yahoo api key>"
   comments: "Issued at https://developer.yahoo.co.jp/webapi/shopping/v3/itemsearch.html"
 frontend:
-  mode: "external | internal"
-  dist_dir: "<frontend dist dir when frontend.mode=gin>"
+  mode: "external | gin"
   index_file: "index.html"

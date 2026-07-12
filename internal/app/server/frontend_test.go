@@ -1,27 +1,20 @@
 package server
 
 import (
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"IRIS-backend/internal/platform/db"
 )
 
-func TestResolveFrontendAssetsDefaultsIndexFile(t *testing.T) {
-	distDir := t.TempDir()
-	indexPath := filepath.Join(distDir, defaultFrontendIndex)
-	if err := os.WriteFile(indexPath, []byte("<html>ok</html>"), 0o600); err != nil {
-		t.Fatalf("failed to create index file: %v", err)
-	}
-
+func TestResolveFrontendAssetsDefaultsToEmbeddedIndex(t *testing.T) {
 	cfg := &db.Config{
 		Frontend: db.FrontendConfig{
-			Mode:    frontendModeGin,
-			DistDir: distDir,
+			Mode: frontendModeGin,
 		},
 	}
 
@@ -29,47 +22,43 @@ func TestResolveFrontendAssetsDefaultsIndexFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected frontend assets to resolve, got %v", err)
 	}
-	if assets.IndexPath != indexPath {
-		t.Fatalf("expected default index path %q, got %q", indexPath, assets.IndexPath)
+	if assets.IndexPath != defaultFrontendIndex {
+		t.Fatalf("expected default index path %q, got %q", defaultFrontendIndex, assets.IndexPath)
+	}
+	if !strings.HasPrefix(assets.Source, "embedded:") {
+		t.Fatalf("expected embedded frontend source, got %q", assets.Source)
 	}
 }
 
-func TestResolveFrontendAssetsRequiresDistDirInGinMode(t *testing.T) {
+func TestResolveFrontendAssetsRejectsMissingEmbeddedIndex(t *testing.T) {
 	cfg := &db.Config{
 		Frontend: db.FrontendConfig{
-			Mode: frontendModeGin,
+			Mode:      frontendModeGin,
+			IndexFile: "missing.html",
 		},
 	}
 
 	if _, err := resolveFrontendAssets(cfg); err == nil {
-		t.Fatal("expected gin frontend mode without dist_dir to fail")
+		t.Fatal("expected gin frontend mode with missing embedded index to fail")
 	}
 }
 
 func TestNewRouterServesFrontendFilesAndSPAFallback(t *testing.T) {
-	distDir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(distDir, "assets"), 0o755); err != nil {
-		t.Fatalf("failed to create asset dir: %v", err)
-	}
-
 	indexContent := "<html><body>spa</body></html>"
 	scriptContent := "console.log('spa');"
-	if err := os.WriteFile(filepath.Join(distDir, "index.html"), []byte(indexContent), 0o600); err != nil {
-		t.Fatalf("failed to create index file: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(distDir, "assets", "app.js"), []byte(scriptContent), 0o600); err != nil {
-		t.Fatalf("failed to create asset file: %v", err)
-	}
+	frontendFS := http.FS(fstest.MapFS{
+		"index.html":    {Data: []byte(indexContent)},
+		"assets/app.js": {Data: []byte(scriptContent)},
+	})
 
 	cfg := &db.Config{
 		Mode: modeRelease,
 		Frontend: db.FrontendConfig{
 			Mode:      frontendModeGin,
-			DistDir:   distDir,
 			IndexFile: "index.html",
 		},
 	}
-	frontendAssets, err := resolveFrontendAssets(cfg)
+	frontendAssets, err := newFrontendAssets(frontendFS, "index.html", "test")
 	if err != nil {
 		t.Fatalf("failed to resolve frontend assets: %v", err)
 	}
@@ -137,3 +126,28 @@ func TestNewRouterServesFrontendFilesAndSPAFallback(t *testing.T) {
 		})
 	}
 }
+
+func TestLookupFrontendFileReturnsNotFoundForMissingAsset(t *testing.T) {
+	frontendFS := http.FS(fstest.MapFS{
+		"index.html": {Data: []byte("ok")},
+	})
+
+	_, found, err := lookupFrontendFile(frontendFS, "/missing.js")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if found {
+		t.Fatal("expected missing asset lookup to report not found")
+	}
+}
+
+func TestStatFrontendFileTreatsMissingAssetAsNotExist(t *testing.T) {
+	frontendFS := http.FS(fstest.MapFS{})
+
+	_, err := statFrontendFile(frontendFS, "missing.js")
+	if !isNotExistError(err) {
+		t.Fatalf("expected missing asset error to be treated as not-exist, got %v", err)
+	}
+}
+
+var _ fs.FS = fstest.MapFS{}

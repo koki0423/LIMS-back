@@ -9,6 +9,7 @@ mysql -u root -p assetdb < quick.sql
 
 # 起動
 go run ./cmd/server
+go run ./cmd/server --config config/config.yaml
 
 # 動作確認は cURL を実行
 
@@ -64,12 +65,15 @@ curl -s "http://localhost:8080/assets/search?created_from=2026-01-01&created_to=
 
 # フロント配信モード
 # external: 既存どおりフロントは別オリジンで配信し、backend は API のみ配信する
-# gin: Gin が frontend.dist_dir 配下の静的ファイルを配信し、非 API パスは frontend.index_file へフォールバックする
+# gin: Gin が埋め込み済みフロント資産を配信し、非 API パスは frontend.index_file へフォールバックする
 
 # config/config.yaml 例
 frontend:
   mode: "external"
-  dist_dir: "../frontend/dist"
   index_file: "index.html"
 
-# gin モードを使う場合は、起動前に frontend.dist_dir と index_file が実在している必要がある
+# gin モードの配布用ビルド手順
+# 1. frontend のビルド成果物を internal/app/server/web/dist/ に配置する
+# 2. backend ルートで go build -o server.exe ./cmd/server を実行する
+# 3. 生成された server.exe は frontend を埋め込んだ単一バイナリとして動作する
+# 4. 別設定で起動する場合は server.exe --config <configのパス> を使う

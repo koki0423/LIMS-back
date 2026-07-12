@@ -52,7 +52,7 @@ func Run(configPath string) error {
 	}
 	log.Printf("[INFO] frontend mode: %s\n", normalizedFrontendMode(cfg.Frontend.Mode))
 	if frontendAssets != nil {
-		log.Printf("[INFO] serving frontend from: %s", frontendAssets.DistDir)
+		log.Printf("[INFO] serving frontend from: %s", frontendAssets.Source)
 	}
 
 	conn, err := db.Connect(cfg.DB)

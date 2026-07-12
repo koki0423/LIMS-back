@@ -35,7 +35,6 @@ type YahooConfig struct {
 
 type FrontendConfig struct {
 	Mode      string `yaml:"mode"`
-	DistDir   string `yaml:"dist_dir"`
 	IndexFile string `yaml:"index_file"`
 }
 
@@ -91,7 +90,6 @@ func loadFromEnv() *Config {
 		},
 		Frontend: FrontendConfig{
 			Mode:      getEnv("FRONTEND_MODE", "external"),
-			DistDir:   getEnv("FRONTEND_DIST_DIR", ""),
 			IndexFile: getEnv("FRONTEND_INDEX_FILE", "index.html"),
 		},
 	}

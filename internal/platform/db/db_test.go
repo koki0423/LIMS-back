@@ -30,16 +30,12 @@ func TestLoadFromEnvReadsTLS(t *testing.T) {
 
 func TestLoadFromEnvReadsFrontendConfig(t *testing.T) {
 	t.Setenv("FRONTEND_MODE", "gin")
-	t.Setenv("FRONTEND_DIST_DIR", "frontend/dist")
 	t.Setenv("FRONTEND_INDEX_FILE", "app.html")
 
 	cfg := loadFromEnv()
 
 	if cfg.Frontend.Mode != "gin" {
 		t.Fatalf("expected FRONTEND_MODE to be loaded, got %q", cfg.Frontend.Mode)
-	}
-	if cfg.Frontend.DistDir != "frontend/dist" {
-		t.Fatalf("expected FRONTEND_DIST_DIR to be loaded, got %q", cfg.Frontend.DistDir)
 	}
 	if cfg.Frontend.IndexFile != "app.html" {
 		t.Fatalf("expected FRONTEND_INDEX_FILE to be loaded, got %q", cfg.Frontend.IndexFile)

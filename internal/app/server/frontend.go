@@ -1,11 +1,14 @@
 package server
 
 import (
+	"bytes"
+	"embed"
+	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"net/http"
-	"os"
 	"path"
-	"path/filepath"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -17,11 +20,16 @@ const (
 	frontendModeExternal = "external"
 	frontendModeGin      = "gin"
 	defaultFrontendIndex = "index.html"
+	embeddedFrontendRoot = "web/dist"
 )
 
+//go:embed web/dist
+var embeddedFrontendFiles embed.FS
+
 type frontendAssets struct {
-	DistDir   string
+	FS        http.FileSystem
 	IndexPath string
+	Source    string
 }
 
 func validateAppMode(mode string) error {
@@ -46,48 +54,64 @@ func resolveFrontendAssets(cfg *db.Config) (*frontendAssets, error) {
 	case frontendModeExternal:
 		return nil, nil
 	case frontendModeGin:
+		return newEmbeddedFrontendAssets(cfg.Frontend.IndexFile)
 	default:
 		return nil, fmt.Errorf("unsupported frontend.mode %q: expected %s or %s", cfg.Frontend.Mode, frontendModeExternal, frontendModeGin)
 	}
+}
 
-	distDir := strings.TrimSpace(cfg.Frontend.DistDir)
-	if distDir == "" {
-		return nil, fmt.Errorf("frontend.mode=gin requires frontend.dist_dir")
-	}
-
-	resolvedDistDir, err := filepath.Abs(filepath.Clean(distDir))
+func newEmbeddedFrontendAssets(indexFile string) (*frontendAssets, error) {
+	subtree, err := fs.Sub(embeddedFrontendFiles, embeddedFrontendRoot)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve frontend.dist_dir: %w", err)
-	}
-	info, err := os.Stat(resolvedDistDir)
-	if err != nil {
-		return nil, fmt.Errorf("frontend.dist_dir not found: %w", err)
-	}
-	if !info.IsDir() {
-		return nil, fmt.Errorf("frontend.dist_dir is not a directory: %s", resolvedDistDir)
+		return nil, fmt.Errorf("failed to open embedded frontend assets: %w", err)
 	}
 
-	indexFile := strings.TrimSpace(cfg.Frontend.IndexFile)
-	if indexFile == "" {
-		indexFile = defaultFrontendIndex
+	return newFrontendAssets(http.FS(subtree), indexFile, "embedded:"+embeddedFrontendRoot)
+}
+
+func newFrontendAssets(frontendFS http.FileSystem, indexFile, source string) (*frontendAssets, error) {
+	indexPath, err := normalizeFrontendAssetPath(indexFile)
+	if err != nil {
+		return nil, err
 	}
 
-	indexPath := filepath.Join(resolvedDistDir, filepath.Clean(indexFile))
-	if !pathWithinBase(resolvedDistDir, indexPath) {
-		return nil, fmt.Errorf("frontend.index_file must stay within frontend.dist_dir")
-	}
-	info, err = os.Stat(indexPath)
+	info, err := statFrontendFile(frontendFS, indexPath)
 	if err != nil {
-		return nil, fmt.Errorf("frontend.index_file not found: %w", err)
+		return nil, fmt.Errorf("frontend.index_file not found in %s: %w", source, err)
 	}
 	if info.IsDir() {
-		return nil, fmt.Errorf("frontend.index_file points to a directory: %s", indexPath)
+		return nil, fmt.Errorf("frontend.index_file points to a directory in %s: %s", source, indexPath)
 	}
 
 	return &frontendAssets{
-		DistDir:   resolvedDistDir,
+		FS:        frontendFS,
 		IndexPath: indexPath,
+		Source:    source,
 	}, nil
+}
+
+func normalizeFrontendAssetPath(assetPath string) (string, error) {
+	assetPath = strings.TrimSpace(assetPath)
+	if assetPath == "" {
+		assetPath = defaultFrontendIndex
+	}
+
+	cleanPath := path.Clean("/" + assetPath)
+	if cleanPath == "/" {
+		return "", fmt.Errorf("frontend.index_file must point to a file")
+	}
+
+	return strings.TrimPrefix(cleanPath, "/"), nil
+}
+
+func statFrontendFile(frontendFS http.FileSystem, assetPath string) (fs.FileInfo, error) {
+	file, err := frontendFS.Open(assetPath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	return file.Stat()
 }
 
 func shouldEnableDevCORS(mode, frontendMode string) bool {
@@ -100,7 +124,7 @@ func registerFrontendRoutes(r *gin.Engine, assets *frontendAssets) {
 	}
 
 	serveIndex := func(c *gin.Context) {
-		c.File(assets.IndexPath)
+		serveFrontendFile(c, assets.FS, assets.IndexPath)
 	}
 
 	r.GET("/", serveIndex)
@@ -118,13 +142,13 @@ func registerFrontendRoutes(r *gin.Engine, assets *frontendAssets) {
 			return
 		}
 
-		filePath, found, err := lookupFrontendFile(assets.DistDir, requestPath)
+		filePath, found, err := lookupFrontendFile(assets.FS, requestPath)
 		if err != nil {
 			c.Status(http.StatusNotFound)
 			return
 		}
 		if found {
-			c.File(filePath)
+			serveFrontendFile(c, assets.FS, filePath)
 			return
 		}
 
@@ -145,21 +169,16 @@ func isReservedBackendPath(requestPath string) bool {
 		strings.HasPrefix(cleanPath, "/swagger/")
 }
 
-func lookupFrontendFile(distDir, requestPath string) (string, bool, error) {
+func lookupFrontendFile(frontendFS http.FileSystem, requestPath string) (string, bool, error) {
 	cleanPath := path.Clean("/" + requestPath)
 	if cleanPath == "/" {
 		return "", false, nil
 	}
 
 	relativePath := strings.TrimPrefix(cleanPath, "/")
-	candidate := filepath.Join(distDir, filepath.FromSlash(relativePath))
-	if !pathWithinBase(distDir, candidate) {
-		return "", false, fmt.Errorf("requested file escapes dist dir")
-	}
-
-	info, err := os.Stat(candidate)
+	info, err := statFrontendFile(frontendFS, relativePath)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if isNotExistError(err) {
 			return "", false, nil
 		}
 		return "", false, err
@@ -168,7 +187,34 @@ func lookupFrontendFile(distDir, requestPath string) (string, bool, error) {
 		return "", false, nil
 	}
 
-	return candidate, true, nil
+	return relativePath, true, nil
+}
+
+func serveFrontendFile(c *gin.Context, frontendFS http.FileSystem, assetPath string) {
+	file, err := frontendFS.Open(assetPath)
+	if err != nil {
+		c.Status(http.StatusNotFound)
+		return
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil || info.IsDir() {
+		c.Status(http.StatusNotFound)
+		return
+	}
+
+	if readSeeker, ok := file.(io.ReadSeeker); ok {
+		http.ServeContent(c.Writer, c.Request, info.Name(), info.ModTime(), readSeeker)
+		return
+	}
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+	http.ServeContent(c.Writer, c.Request, info.Name(), info.ModTime(), bytes.NewReader(data))
 }
 
 func shouldServeSPAIndex(r *http.Request, requestPath string) bool {
@@ -178,10 +224,6 @@ func shouldServeSPAIndex(r *http.Request, requestPath string) bool {
 	return path.Ext(requestPath) == ""
 }
 
-func pathWithinBase(basePath, targetPath string) bool {
-	rel, err := filepath.Rel(basePath, targetPath)
-	if err != nil {
-		return false
-	}
-	return rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
+func isNotExistError(err error) bool {
+	return errors.Is(err, fs.ErrNotExist)
 }
